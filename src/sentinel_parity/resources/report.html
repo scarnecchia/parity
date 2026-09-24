@@ -1,8 +1,310 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Sentinel parity report</title><style>
-:root{font-family:system-ui,sans-serif;color:#18212b;background:#f6f8fa}body{max-width:1200px;margin:2rem auto;padding:0 1rem}table{border-collapse:collapse;width:100%;margin:1rem 0}th,td{border:1px solid #c7d0d9;padding:.45rem;text-align:left;vertical-align:top;overflow-wrap:anywhere}th{background:#e8edf2}.PASS{color:#075b2a}.FAIL{color:#a2161e}.ERROR{color:#7a3e00}pre{white-space:pre-wrap;overflow-wrap:anywhere}.status{font-weight:700}details{margin:.6rem 0}section{background:white;padding:1rem;margin:1rem 0;border-radius:.35rem}a{overflow-wrap:anywhere}
-</style></head><body>
-<h1>Sentinel parity report</h1><p>Overall status: <strong class="status {{ summary.status }}">{{ summary.status }}</strong></p><p>SAS numeric missing values <code>.</code>, <code>._</code>, and <code>.A</code>–<code>.Z</code> follow polars-readstat's documented default numeric-missing-to-null behavior. Equality compares decoded values under this policy, not raw SAS bytes.</p>
-{% for dataset in summary.datasets %}<section><h2>{{ dataset.name }}</h2><p>Status: <strong class="status {{ dataset.status }}">{{ dataset.status }}</strong> · SAS rows {{ dataset.sas_rows }} · Parquet rows {{ dataset.python_rows }} · matched pairs {{ dataset.matched_pairs }} · SAS-only {{ dataset.sas_only }} · Parquet-only {{ dataset.python_only }}</p><p>{{ dataset.reason or "complete duplicate-aware comparison" }}</p>{% if links.get(dataset.id) %}<p>Details: <a href="{{ links[dataset.id] }}">{{ links[dataset.id] }}</a></p>{% endif %}<details><summary>Schema and reader metadata</summary><pre>{{ dataset.metadata|tojson(indent=2) }}</pre></details>
-{% set truncation = preview_truncation.get(dataset.id, {}) %}{% if previews.get(dataset.id) or truncation.get('sas', 0) or truncation.get('python', 0) %}<h3>Mismatch preview — omitted {{ truncation.get('sas', 0) }} SAS and {{ truncation.get('python', 0) }} Parquet mismatches</h3>{% if previews.get(dataset.id) %}<table><thead><tr><th>Side</th><th>Staging row</th><th>Reason</th><th>Values</th></tr></thead><tbody>{% for row in previews[dataset.id] %}<tr><td>{{ row.side }}</td><td>{{ row.staging_row_number }}</td><td>{{ row.reason }}</td><td><pre>{{ row['values']|tojson }}</pre></td></tr>{% endfor %}</tbody></table>{% endif %}{% endif %}</section>{% endfor %}
-<footer><p>Reports can contain sensitive data; store and delete them according to local data-handling rules. Previews are bounded; JSONL details contain the complete row-level result.</p></footer></body></html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sentinel parity report</title>
+<link rel="icon" href="data:,">
+<style>
+:root {
+  --bg: oklch(97.5% 0.004 255);
+  --surface: oklch(100% 0 0);
+  --ink: oklch(24% 0.02 255);
+  --ink-muted: oklch(46% 0.02 255);
+  --ink-faint: oklch(60% 0.015 255);
+  --line: oklch(90% 0.008 255);
+  --line-strong: oklch(84% 0.01 255);
+  --pass: oklch(40% 0.11 152);
+  --pass-bg: oklch(96% 0.032 152);
+  --fail: oklch(44% 0.17 27);
+  --fail-bg: oklch(96.5% 0.022 27);
+  --error: oklch(42% 0.1 70);
+  --error-bg: oklch(96.5% 0.045 80);
+  --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0 auto;
+  max-width: 71rem;
+  padding: 2.5rem 1.5rem 3rem;
+  background: var(--bg);
+  color: var(--ink);
+  font: 0.9375rem/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+a { color: inherit; }
+:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; border-radius: 2px; }
+
+/* Masthead */
+.masthead { margin-bottom: 1.25rem; }
+.masthead h1 {
+  margin: 0 0 0.375rem;
+  font-size: 1.375rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+.masthead-row { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+.run-meta { margin: 0.5rem 0 0; font-size: 0.8125rem; color: var(--ink-muted); }
+.run-meta .policy { color: var(--ink-faint); }
+
+/* Status vocabulary */
+.pill {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  padding: 0.125rem 0.625rem 0.125rem 0.5rem;
+  border-radius: 999px;
+  font: 600 0.75rem/1.6 var(--mono);
+  letter-spacing: 0.02em;
+}
+.pill::before { content: ""; width: 0.4375rem; height: 0.4375rem; border-radius: 50%; background: currentcolor; }
+.pill.PASS { color: var(--pass); background: var(--pass-bg); }
+.pill.FAIL { color: var(--fail); background: var(--fail-bg); }
+.pill.ERROR { color: var(--error); background: var(--error-bg); }
+
+/* Dataset navigation */
+.dataset-nav {
+  display: flex; flex-wrap: wrap; gap: 0.375rem;
+  padding: 0.875rem 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.dataset-nav a {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  max-width: 22rem;
+  padding: 0.1875rem 0.625rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  font: 500 0.75rem/1.5 var(--mono);
+  text-decoration: none;
+  overflow: hidden;
+  transition: border-color 150ms ease-out;
+}
+.dataset-nav a::before { content: ""; width: 0.375rem; height: 0.375rem; border-radius: 50%; background: var(--ink-faint); }
+.dataset-nav a.PASS::before { background: var(--pass); }
+.dataset-nav a.FAIL::before { background: var(--fail); }
+.dataset-nav a.ERROR::before { background: var(--error); }
+.dataset-nav a span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dataset-nav a:hover { border-color: var(--ink-faint); }
+@media (prefers-reduced-motion: reduce) { .dataset-nav a { transition: none; } }
+
+/* Dataset sections */
+section {
+  margin: 1.25rem 0;
+  padding: 1.125rem 1.375rem 1.25rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+}
+section > header { display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap; }
+section h2 {
+  margin: 0;
+  font: 600 1rem/1.4 var(--mono);
+  letter-spacing: -0.005em;
+  overflow-wrap: anywhere;
+}
+.reason-chip {
+  padding: 0.0625rem 0.5rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  font: 500 0.6875rem/1.6 var(--mono);
+  color: var(--ink-muted);
+}
+
+.stats {
+  display: flex; flex-wrap: wrap; gap: 0 2.25rem;
+  margin: 0.875rem 0 0;
+  padding: 0.625rem 0;
+  border-top: 1px solid var(--line);
+}
+.stat { display: flex; flex-direction: column; gap: 0.0625rem; min-width: 3.5rem; }
+.stat .label {
+  font: 500 0.6875rem/1.4 system-ui, sans-serif;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.stat .value { font: 600 1rem/1.3 var(--mono); font-variant-numeric: tabular-nums; }
+.stat .value.zero { color: var(--ink-faint); font-weight: 500; }
+.stat .value.drift { color: var(--fail); }
+
+.actions { margin: 0.625rem 0 0; font-size: 0.8125rem; }
+.actions a { color: var(--ink-muted); text-underline-offset: 2px; }
+.actions a:hover { color: var(--ink); }
+
+details {
+  margin: 0.625rem 0 0;
+  border: 1px solid var(--line);
+  border-radius: 0.375rem;
+  background: var(--surface);
+}
+details > summary {
+  padding: 0.4375rem 0.75rem;
+  font: 500 0.8125rem/1.5 system-ui, sans-serif;
+  color: var(--ink-muted);
+  cursor: pointer;
+  user-select: none;
+}
+details > summary:hover { color: var(--ink); }
+details[open] > summary { border-bottom: 1px solid var(--line); }
+details pre {
+  margin: 0;
+  padding: 0.75rem;
+  max-height: 22rem;
+  overflow: auto;
+  font: 0.75rem/1.5 var(--mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Mismatch preview */
+.preview { margin: 1rem 0 0; }
+.preview h3 {
+  margin: 0 0 0.5rem;
+  font: 600 0.8125rem/1.5 system-ui, sans-serif;
+  color: var(--ink-muted);
+}
+.preview table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.preview th {
+  padding: 0.375rem 0.75rem;
+  border-bottom: 1px solid var(--line-strong);
+  font: 500 0.6875rem/1.4 system-ui, sans-serif;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  text-align: left;
+  color: var(--ink-faint);
+  white-space: nowrap;
+}
+.preview td {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+  font-family: var(--mono);
+  font-size: 0.8125rem;
+}
+.preview td.side, .preview td.row, .preview td.reason-cell { white-space: nowrap; }
+.preview td.row { color: var(--ink-muted); font-variant-numeric: tabular-nums; }
+.side-badge {
+  display: inline-block;
+  padding: 0 0.4375rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 0.25rem;
+  font: 500 0.6875rem/1.7 var(--mono);
+  color: var(--ink-muted);
+}
+.cell-chips { display: flex; flex-wrap: wrap; gap: 0.25rem 0.5rem; }
+.cell-chip { overflow-wrap: anywhere; }
+.cell-chip .name { color: var(--ink-faint); }
+.cell-chip .name::after { content: "="; margin-left: 0.125rem; color: var(--ink-faint); }
+.raw-json summary { font-size: 0.75rem; }
+
+/* Footer */
+footer {
+  margin-top: 2rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+  font-size: 0.8125rem;
+  color: var(--ink-muted);
+}
+footer p { margin: 0 0 0.375rem; max-width: 75ch; }
+footer .build { font: 0.75rem/1.6 var(--mono); color: var(--ink-faint); }
+
+@media print {
+  body { background: #fff; padding: 0; }
+  section { break-inside: avoid; border-color: #ccc; }
+  details pre { max-height: none; overflow: visible; }
+  .dataset-nav { display: none; }
+}
+</style>
+</head>
+<body>
+<header class="masthead">
+  <h1>Sentinel parity report</h1>
+  <div class="masthead-row">
+    <span class="pill {{ summary.status }}">{{ summary.status }}</span>
+    {% set statuses = summary.datasets|map(attribute='status')|list %}
+    <span class="run-meta">{{ statuses|length }} datasets · {{ statuses.count("PASS") }} passed · {{ statuses.count("FAIL") }} failed · {{ statuses.count("ERROR") }} error</span>
+  </div>
+  {% if summary.policy %}<p class="run-meta policy">{{ summary.policy }}</p>{% endif %}
+</header>
+{% if summary.datasets|length > 1 %}
+<nav class="dataset-nav" aria-label="Datasets">
+  {% for dataset in summary.datasets %}<a class="{{ dataset.status }}" href="#dataset-{{ dataset.id }}"><span>{{ dataset.name }}</span></a>
+  {% endfor %}
+</nav>
+{% endif %}
+{% for dataset in summary.datasets %}
+<section id="dataset-{{ dataset.id }}">
+  <header>
+    <h2>{{ dataset.name }}</h2>
+    <span class="pill {{ dataset.status }}">{{ dataset.status }}</span>
+    {% if dataset.reason %}<span class="reason-chip">{{ dataset.reason }}</span>{% endif %}
+  </header>
+  {% set stats = [
+    ("SAS rows", dataset.sas_rows, false),
+    ("Parquet rows", dataset.python_rows, false),
+    ("Matched", dataset.matched_pairs, false),
+    ("SAS-only", dataset.sas_only, true),
+    ("Parquet-only", dataset.python_only, true),
+  ] %}
+  <div class="stats">
+    {% for label, value, is_drift in stats %}
+    <div class="stat">
+      <span class="label">{{ label }}</span>
+      <span class="value {{ "drift" if is_drift and value else ("zero" if not value else "") }}">{{ value }}</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% if links.get(dataset.id) %}
+  <p class="actions"><a href="{{ links[dataset.id] }}">Row-level details (JSONL)</a></p>
+  {% endif %}
+  {% if dataset.metadata %}
+  <details>
+    <summary>Schema and reader metadata</summary>
+    <pre>{{ dataset.metadata|tojson(indent=2) }}</pre>
+  </details>
+  {% endif %}
+  {% set truncation = preview_truncation.get(dataset.id, {}) %}
+  {% if previews.get(dataset.id) or truncation.get("sas", 0) or truncation.get("python", 0) %}
+  <div class="preview">
+    <h3>Mismatch preview — omitted {{ truncation.get("sas", 0) }} SAS and {{ truncation.get("python", 0) }} Parquet mismatches</h3>
+    {% if previews.get(dataset.id) %}
+    <table>
+      <thead>
+        <tr><th scope="col">Side</th><th scope="col">Row</th><th scope="col">Reason</th><th scope="col">Values</th></tr>
+      </thead>
+      <tbody>
+        {% for row in previews[dataset.id] %}
+        <tr>
+          <td class="side"><span class="side-badge">{{ row.side }}</span></td>
+          <td class="row">{{ row.staging_row_number }}</td>
+          <td class="reason-cell"><span class="reason-chip">{{ row.reason }}</span></td>
+          <td>
+            <span class="cell-chips">
+              {% for name, env in row["values"].items() %}
+              <span class="cell-chip"><span class="name">{{ name }}</span>{% if env is none %}<span class="val">null</span>{% elif "value" in env %}<span class="val">{{ env["value"] }}</span>{% else %}<span class="val">{{ env["type"] }}</span>{% endif %}</span>
+              {% endfor %}
+            </span>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <details class="raw-json">
+      <summary>Raw preview values (JSON)</summary>
+      <pre>{% for row in previews[dataset.id] %}{{ row["values"]|tojson }}
+{% endfor %}</pre>
+    </details>
+    {% endif %}
+  </div>
+  {% endif %}
+</section>
+{% endfor %}
+<footer>
+  <p>Reports can contain sensitive data; store and delete them according to local data-handling rules. Previews are bounded; JSONL details contain the complete row-level result.</p>
+  <p class="build">{% for name, version in summary.get("versions", {}).items() %}{{ name }} {{ version }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+</footer>
+</body>
+</html>
