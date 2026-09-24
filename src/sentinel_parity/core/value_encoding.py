@@ -1,5 +1,10 @@
 # pattern: Functional Core
-"""Injective canonical equality keys and typed JSON envelopes."""
+"""Value-space equality keys and typed display envelopes.
+
+Cells match when their decoded values are equal; declared storage types are
+never a factor. 16.0 = 16 while 16.2 != 16, True = 1, naive timestamps are
+instants read as UTC, and dates equal midnight instants.
+"""
 
 from __future__ import annotations
 
@@ -13,7 +18,7 @@ from typing import Any
 
 def numeric_key(value: int | float | Decimal) -> str:
     if isinstance(value, bool):
-        raise TypeError("boolean is not a numeric cell")
+        value = int(value)
     if isinstance(value, float):
         if math.isnan(value):
             return "f:nan"
@@ -31,9 +36,17 @@ def numeric_key(value: int | float | Decimal) -> str:
     return f"n:{ratio.numerator}/{ratio.denominator}"
 
 
-def temporal_ns_key(epoch_ns: int, timezone_aware: bool) -> str:
-    prefix = "dt-aware-ns:" if timezone_aware else "dt-naive-ns:"
-    return prefix + str(epoch_ns)
+_EPOCH_NAIVE = datetime(1970, 1, 1)
+_EPOCH_AWARE = datetime(1970, 1, 1, tzinfo=UTC)
+
+
+def _instant_ns(value: datetime) -> int:
+    delta = value - _EPOCH_NAIVE if value.tzinfo is None else value.astimezone(UTC) - _EPOCH_AWARE
+    return (delta // timedelta(microseconds=1)) * 1000
+
+
+def temporal_ns_key(epoch_ns: int) -> str:
+    return "dt-ns:" + str(epoch_ns)
 
 
 def temporal_ns_iso(epoch_ns: int, timezone_aware: bool) -> str:
@@ -50,16 +63,13 @@ def temporal_ns_iso(epoch_ns: int, timezone_aware: bool) -> str:
 def canonical_key(value: Any) -> str:
     if value is None:
         return "null"
-    if isinstance(value, bool):
-        return "b:1" if value else "b:0"
-    if isinstance(value, (int, float, Decimal)):
+    if isinstance(value, (bool, int, float, Decimal)):
         return numeric_key(value)
     if isinstance(value, datetime):
-        if value.tzinfo is None:
-            return "dt-naive:" + value.isoformat(timespec="microseconds")
-        return "dt-aware:" + value.astimezone(UTC).isoformat(timespec="microseconds")
+        return temporal_ns_key(_instant_ns(value))
     if isinstance(value, date):
-        return "date:" + value.isoformat()
+        days = value.toordinal() - _EPOCH_NAIVE.date().toordinal()
+        return temporal_ns_key(days * 86_400_000_000_000)
     if isinstance(value, str):
         return "s:" + value
     if isinstance(value, (bytes, bytearray, memoryview)):

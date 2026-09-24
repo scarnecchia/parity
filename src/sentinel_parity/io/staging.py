@@ -78,11 +78,6 @@ def stage(source: Path, kind: str, work: Path, batch_size: int = BATCH_ROWS) -> 
     by_normal = {column.normalized: column.original for column in normalized}
     ordered = list(by_normal)
     types = {column.normalized: str(schema[column.original]) for column in normalized}
-    timezone_aware: dict[str, bool] = {}
-    for column in normalized:
-        dtype = schema[column.original]
-        if isinstance(dtype, pl.Datetime):
-            timezone_aware[column.normalized] = dtype.time_zone is not None
     parquet = pq.ParquetFile(raw_path)  # type: ignore[no-untyped-call]
     rows = 0
     observed_max_batch_size = 0
@@ -105,8 +100,7 @@ def stage(source: Path, kind: str, work: Path, batch_size: int = BATCH_ROWS) -> 
                     None if value is None else value * scale for value in epoch_values
                 ]
                 keys = [
-                    "null" if value is None else temporal_ns_key(value, array_timezone_aware)
-                    for value in epoch_ns_values
+                    "null" if value is None else temporal_ns_key(value) for value in epoch_ns_values
                 ]
                 payloads = [
                     "null"
@@ -166,7 +160,6 @@ def stage(source: Path, kind: str, work: Path, batch_size: int = BATCH_ROWS) -> 
         "columns": tuple(ordered),
         "original_columns": tuple(names),
         "types": types,
-        "timezone_aware": timezone_aware,
         "metadata": metadata,
         "original_describe": original_describe,
         "describe": describe,

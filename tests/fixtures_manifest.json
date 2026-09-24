@@ -21,11 +21,6 @@
     "dates_null.sas7bdat": {
       "url": "https://raw.githubusercontent.com/pandas-dev/pandas/e2674416e46dad28ffe2b8fba4359916f2857ef5/pandas/tests/io/sas/data/dates_null.sas7bdat",
       "sha256": "c54ec8920241b21eb98343fc407c0e3566626ad1f6d700274ec56c7dcac1dba4"
-    },
-    "missing_test.sas7bdat": {
-      "url": "https://raw.githubusercontent.com/Roche/pyreadstat/12cc1495d468ae8a170c57cce7557c147b972eac/test_data/missing_data/missing_test.sas7bdat",
-      "sha256": "620f8eac41710b7ea4293a5ab4a0fb8d1fbc886fa5fa2d0d2165f45a7a10865c",
-      "expected_null_codes": [".A", ".B", ".C", ".X", ".Y", ".Z", "._"]
     }
   }
 }

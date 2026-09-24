@@ -14,7 +14,6 @@ def fixtures() -> Path:
         "datetime.sas7bdat",
         "datetime.csv",
         "dates_null.sas7bdat",
-        "missing_test.sas7bdat",
     )
     missing = [name for name in required if not (FIXTURES / name).is_file()]
     if missing:

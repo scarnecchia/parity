@@ -1,5 +1,9 @@
 # pattern: Imperative Shell
-"""Disk-backed duplicate-aware comparison and streamed detail output."""
+"""Disk-backed duplicate-aware comparison and streamed detail output.
+
+Only decoded values decide the result; declared column types are never
+compared.
+"""
 
 from __future__ import annotations
 
@@ -60,29 +64,6 @@ def compare(
                 "python_only": right["rows"],
                 "details_path": detail_path,
             }
-        for name in left_columns:
-            left_type, right_type = left["types"][name], right["types"][name]
-            if not _compatible(
-                left_type,
-                right_type,
-                left.get("timezone_aware", {}).get(name),
-                right.get("timezone_aware", {}).get(name),
-            ):
-                detail_path = _schema_failure(
-                    left,
-                    right,
-                    work / f"{artifact_id}.jsonl",
-                    dataset_id,
-                    "incompatible_column_family",
-                )
-                return {
-                    "status": "FAIL",
-                    "reason": "incompatible_column_family",
-                    "matched": 0,
-                    "sas_only": left["rows"],
-                    "python_only": right["rows"],
-                    "details_path": detail_path,
-                }
         keycols = [f"k_{name}" for name in left_columns]
         keys = ", ".join(quote_identifier(name) for name in keycols)
         for side in ("sas", "python"):
@@ -158,54 +139,13 @@ def compare(
         connection.close()
 
 
-def _family(value: str, timezone_aware: bool | None = None) -> str:
-    text = value.casefold().strip()
-    if text.startswith(("list(", "array(", "struct(", "map(", "duration", "time(")):
-        return "unsupported"
-    if text == "time":
-        return "unsupported"
-    if text.startswith(("datetime(", "timestamp(")) or text in {"datetime", "timestamp"}:
-        if timezone_aware is not None:
-            return "timestamp-aware" if timezone_aware else "timestamp-naive"
-        return "timestamp"
-    if text == "date":
-        return "date"
-    if text in {
-        "int8",
-        "int16",
-        "int32",
-        "int64",
-        "uint8",
-        "uint16",
-        "uint32",
-        "uint64",
-        "float32",
-        "float64",
-        "decimal",
-    } or text.startswith("decimal("):
-        return "number"
-    if text in {"bool", "boolean"}:
-        return "boolean"
-    if text in {"string", "utf8", "large_string"}:
-        return "string"
-    if text in {"binary", "large_binary"}:
-        return "binary"
-    return "unsupported"
-
-
 def _unsupported(value: str) -> bool:
-    return _family(value) == "unsupported"
-
-
-def _compatible(
-    left: str,
-    right: str,
-    left_timezone_aware: bool | None = None,
-    right_timezone_aware: bool | None = None,
-) -> bool:
-    left_family = _family(left, left_timezone_aware)
-    right_family = _family(right, right_timezone_aware)
-    return left_family == right_family and left_family != "unsupported"
+    """True only for value shapes staging cannot decode at all."""
+    text = value.casefold().strip()
+    return (
+        text.startswith(("list(", "array(", "struct(", "map(", "duration", "time("))
+        or text == "time"
+    )
 
 
 def _except_count(

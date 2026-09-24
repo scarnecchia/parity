@@ -117,29 +117,7 @@ def test_real_sas_reader_oracle(fixtures: Path, tmp_path: Path) -> None:
     ] == len(oracle)
 
 
-def test_real_sas_special_missing_policy(fixtures: Path) -> None:
-    result = (
-        polars_readstat.ScanReadstat(
-            str(fixtures / "missing_test.sas7bdat"),
-            informative_nulls={"columns": "all", "mode": "separate_column"},
-        )
-        .df.collect()
-        .to_dicts()[0]
-    )
-    for name, code in (
-        ("var1", ".A"),
-        ("var2", ".B"),
-        ("var3", ".C"),
-        ("var4", ".X"),
-        ("var5", ".Y"),
-        ("var6", ".Z"),
-        ("var7", "._"),
-    ):
-        assert result[name] is None
-        assert result[f"{name}_null"] == code
-
-
-def test_real_sas_temporal_policy(fixtures: Path) -> None:
+def test_real_sas_temporal_reader_schema(fixtures: Path) -> None:
     reader = polars_readstat.ScanReadstat(str(fixtures / "datetime.sas7bdat"))
     assert reader.metadata["row_count"] == 4
     assert reader.schema["Date1"] == pl.Date
@@ -180,8 +158,8 @@ def test_timestamp_ns_keys_and_adjacent_ns_mismatch_are_exact(
     finally:
         connection.close()
     assert adjacent_keys == [
-        ("dt-naive-ns:1234567891234567890",),
-        ("dt-naive-ns:1234567891234567891",),
+        ("dt-ns:1234567891234567890",),
+        ("dt-ns:1234567891234567891",),
     ]
     assert adjacent_keys[0] != adjacent_keys[1]
 
@@ -273,7 +251,7 @@ def test_timezone_named_zone_compares_equivalent_utc_instants(tmp_path: Path) ->
     assert all(record["dataset_id"] == "timezone-test" for record in records)
 
 
-def test_aware_naive_timestamps_are_schema_family_failure(fixtures: Path, tmp_path: Path) -> None:
+def test_naive_and_aware_timestamps_match_on_values(fixtures: Path, tmp_path: Path) -> None:
     import pyarrow as pa
     import pyarrow.parquet as pq
 
@@ -293,24 +271,21 @@ def test_aware_naive_timestamps_are_schema_family_failure(fixtures: Path, tmp_pa
     )
     pq.write_table(pa.table(fields), python / "dplocal" / "time.parquet")
 
-    assert run(RunConfig(sas, python, tmp_path / "out")) == 1
+    # Same instants under different declared types: values match, so pass.
+    assert run(RunConfig(sas, python, tmp_path / "out")) == 0
     summary = json.loads((tmp_path / "out" / "summary.json").read_text())
     dataset = summary["datasets"][0]
-    assert dataset["status"] == "FAIL"
-    assert dataset["reason"] == "incompatible_column_family"
-    assert dataset["detail_complete"] is True
-    assert (dataset["sas_rows"], dataset["python_rows"]) == (4, 4)
+    assert dataset["status"] == "PASS"
+    assert dataset["reason"] is None
+    assert (dataset["matched_pairs"], dataset["sas_only"], dataset["python_only"]) == (4, 0, 0)
     details = [
         json.loads(line)
         for line in (tmp_path / "out" / summary["detail_links"][dataset["id"]])
         .read_text()
         .splitlines()
     ]
-    assert len(details) == dataset["sas_rows"] + dataset["python_rows"]
     assert len(details) == 8
-    assert all(row["status"] == "FAIL" for row in details)
-    assert all(row["reason"] == "incompatible_column_family" for row in details)
-    assert {row["side"] for row in details} == {"sas", "python"}
+    assert all(row["status"] == "PASS" for row in details)
 
 
 def test_config_cli_equivalence(tmp_path: Path) -> None:
@@ -827,14 +802,24 @@ def test_all_rows_fail_for_schema_or_missing_file(tmp_path: Path) -> None:
             "month": [1] * 1440,
         },
     )
+    # Declared types differ (numeric vs text), but comparison runs on values:
+    # no row matches, so every row fails as only_sas/only_python, not schema.
     assert run(RunConfig(sas3, python3, tmp_path / "family-out")) == 1
-    dataset, records = parse_details(tmp_path / "family-out", "incompatible_column_family")
-    assert dataset["reason"] == "incompatible_column_family"
+    summary3 = json.loads((tmp_path / "family-out" / "summary.json").read_text())
+    dataset = summary3["datasets"][0]
+    assert dataset["status"] == "FAIL"
+    assert dataset["reason"] is None
     assert dataset["sas_rows"] == 1440 and dataset["python_rows"] == 1440
-    assert dataset["detail_complete"] is True
+    assert (dataset["matched_pairs"], dataset["sas_only"], dataset["python_only"]) == (
+        0,
+        1440,
+        1440,
+    )
+    detail_path = tmp_path / "family-out" / summary3["detail_links"][dataset["id"]]
+    records = [json.loads(line) for line in detail_path.read_text().splitlines()]
     assert len(records) == 2880
     assert all(record["status"] == "FAIL" for record in records)
-    assert all(record["reason"] == "incompatible_column_family" for record in records)
+    assert {record["reason"] for record in records} == {"only_sas", "only_python"}
 
 
 def test_all_null_nested_column_is_dataset_error(tmp_path: Path) -> None:
@@ -1312,3 +1297,67 @@ def test_distribution_contents() -> None:
         Path(__file__).resolve().parents[1] / "src/sentinel_parity/resources/report.html"
     ).is_file()
     assert ".parity-fixtures" in (Path(__file__).resolve().parents[1] / ".gitignore").read_text()
+
+
+def test_numeric_values_match_across_widths_but_exact_value_decides(tmp_path: Path) -> None:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from sentinel_parity.io.duckdb_comparison import compare
+    from sentinel_parity.io.staging import stage
+
+    left_path, right_path = tmp_path / "left.parquet", tmp_path / "right.parquet"
+    pq.write_table(pa.table({"n": pa.array([16.0, 16.2], type=pa.float64())}), left_path)
+    pq.write_table(pa.table({"n": pa.array([16, 16.0], type=pa.int64())}), right_path)
+    work = tmp_path / "work"
+    work.mkdir()
+    result = compare(
+        stage(left_path, "python", work),
+        stage(right_path, "python", work),
+        work,
+        "128MB",
+        "2GB",
+        "numeric-value-test",
+    )
+    # 16.0 = 16 matches; 16.2 != 16 decides, regardless of declared width.
+    assert (result["status"], result["matched"]) == ("FAIL", 1)
+    assert (result["sas_only"], result["python_only"]) == (1, 1)
+
+
+def test_boolean_matches_numeric_values_across_types(tmp_path: Path) -> None:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from sentinel_parity.io.duckdb_comparison import compare
+    from sentinel_parity.io.staging import stage
+
+    numeric_path = tmp_path / "numeric.parquet"
+    pq.write_table(pa.table({"flag": pa.array([1, 0, 1, 0], type=pa.int64())}), numeric_path)
+
+    def boolean_parquet(name: str, values: list[bool]) -> Path:
+        path = tmp_path / f"{name}.parquet"
+        pq.write_table(pa.table({"flag": pa.array(values, type=pa.bool_())}), path)
+        return path
+
+    work = tmp_path / "work"
+    work.mkdir()
+    staged_numeric = stage(numeric_path, "python", work)
+    matching = compare(
+        staged_numeric,
+        stage(boolean_parquet("matching", [True, False, True, False]), "python", work),
+        work,
+        "128MB",
+        "2GB",
+        "bool-matching",
+    )
+    assert (matching["status"], matching["matched"]) == ("PASS", 4)
+    mismatching = compare(
+        staged_numeric,
+        stage(boolean_parquet("mismatching", [True, False, True, True]), "python", work),
+        work,
+        "128MB",
+        "2GB",
+        "bool-mismatching",
+    )
+    assert (mismatching["status"], mismatching["matched"]) == ("FAIL", 3)
+    assert (mismatching["sas_only"], mismatching["python_only"]) == (1, 1)

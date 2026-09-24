@@ -142,9 +142,6 @@ def run(config: RunConfig) -> int:
                         "columns": python_stage["original_columns"],
                         "types": python_stage["types"],
                     },
-                    "missing_policy": (
-                        "polars-readstat default: SAS numeric . / ._ / .A-.Z collapse to null"
-                    ),
                 }
                 datasets.append(
                     {
@@ -192,8 +189,8 @@ def run(config: RunConfig) -> int:
             "schema_version": 1,
             "status": status,
             "policy": (
-                "SAS numeric missing . / ._ / .A-.Z collapse to null via "
-                "polars-readstat documented default behavior"
+                "cell values must match exactly (16.0 = 16, 16.2 != 16); "
+                "declared column types are not compared"
             ),
             "versions": _versions(),
             "limits": {

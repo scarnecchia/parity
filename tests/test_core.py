@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from fractions import Fraction
 
@@ -28,20 +28,37 @@ def test_numeric_exactness_boundaries() -> None:
     assert Fraction(1, 10) != Fraction(*(0.1).as_integer_ratio())
 
 
+@given(st.integers(min_value=-(10**18), max_value=10**18))
+def test_integer_values_match_across_widths(value: int) -> None:
+    # Same value matches across declared widths; adjacent values never do.
+    assert canonical_key(value) == canonical_key(Decimal(value))
+    assert canonical_key(value + 1) != canonical_key(value)
+
+
 def test_null_nan_text_policy() -> None:
     assert canonical_key(None) == "null"
     assert canonical_key(float("nan")) == "f:nan"
     assert canonical_key("") != canonical_key(None)
     assert canonical_key("  x ") != canonical_key("x")
-    assert canonical_key(True) != canonical_key(1)
+    assert canonical_key(True) == canonical_key(1) == "n:1/1"
+    assert canonical_key(False) == canonical_key(0)
 
 
-def test_temporal_precision_and_families() -> None:
-    assert canonical_key(date(2024, 1, 1)) != canonical_key(datetime(2024, 1, 1))
+def test_temporal_values_match_across_declared_types() -> None:
+    from datetime import timedelta, timezone
+
+    # Values decide: a date equals its midnight instant, naive reads as UTC,
+    # and aware timestamps normalize to the same instant key.
+    assert canonical_key(date(2024, 1, 1)) == canonical_key(datetime(2024, 1, 1))
     assert canonical_key(datetime(2024, 1, 1, 0, 0, 0, 1)) != canonical_key(datetime(2024, 1, 1))
-    assert canonical_key(
-        datetime(2024, 1, 1, tzinfo=__import__("datetime").timezone.utc)
-    ) != canonical_key(datetime(2024, 1, 1))
+    assert canonical_key(datetime(2024, 1, 1, 5, tzinfo=UTC)) == canonical_key(
+        datetime(2024, 1, 1, 5)
+    )
+    new_york = timezone(timedelta(hours=-5))
+    assert canonical_key(datetime(2024, 1, 1, tzinfo=new_york)) == canonical_key(
+        datetime(2024, 1, 1, 5)
+    )
+    assert canonical_key(date(2024, 1, 2)) != canonical_key(date(2024, 1, 1))
 
 
 def test_unsupported_types() -> None:
