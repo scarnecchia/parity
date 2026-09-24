@@ -13,7 +13,7 @@ from __future__ import annotations
 import base64
 import math
 from datetime import UTC, date, datetime, timedelta
-from decimal import ROUND_DOWN, Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from fractions import Fraction
 from typing import Any
 
@@ -42,12 +42,12 @@ _EPOCH_NAIVE = datetime(1970, 1, 1)
 _EPOCH_AWARE = datetime(1970, 1, 1, tzinfo=UTC)
 
 
-def floor_to_significant(value: Decimal, digits: int) -> Decimal:
-    """Truncate toward zero to `digits` significant decimal digits."""
-    if not value.is_finite() or value == 0:
+def round_to_decimal_places(value: Decimal, digits: int) -> Decimal:
+    """Round to nearest with ties away from zero, to `digits` after the point."""
+    if not value.is_finite():
         return value
-    quantum = Decimal(1).scaleb(value.adjusted() - digits + 1)
-    scaled = (value / quantum).to_integral_value(rounding=ROUND_DOWN)
+    quantum = Decimal(1).scaleb(-digits)
+    scaled = (value / quantum).to_integral_value(rounding=ROUND_HALF_UP)
     return scaled * quantum
 
 
@@ -63,7 +63,7 @@ def rounded_display(
     decimal_value = _as_decimal(value)
     if not decimal_value.is_finite():
         return value
-    normalized = floor_to_significant(decimal_value, round_digits).normalize()
+    normalized = round_to_decimal_places(decimal_value, round_digits).normalize()
     if normalized == normalized.to_integral_value():
         return normalized.quantize(Decimal(1))
     return normalized
@@ -100,7 +100,7 @@ def _text_key(value: str, round_digits: int | None = None) -> str:
     if number.is_nan():
         return "null"
     if round_digits is not None:
-        number = floor_to_significant(number, round_digits)
+        number = round_to_decimal_places(number, round_digits)
     return numeric_key(number)
 
 
@@ -115,7 +115,7 @@ def canonical_key(value: Any, round_digits: int | None = None) -> str:
         if isinstance(value, Decimal) and value.is_nan():
             return "null"
         if round_digits is not None:
-            value = floor_to_significant(_as_decimal(value), round_digits)
+            value = round_to_decimal_places(_as_decimal(value), round_digits)
         return numeric_key(value)
     if isinstance(value, datetime):
         return temporal_ns_key(_instant_ns(value))

@@ -10,8 +10,8 @@ from sentinel_parity.core.discovery import FileEntry, pair_files
 from sentinel_parity.core.names import normalize_columns, normalize_name
 from sentinel_parity.core.value_encoding import (
     canonical_key,
-    floor_to_significant,
     numeric_key,
+    round_to_decimal_places,
     typed_value,
 )
 
@@ -58,19 +58,22 @@ def test_text_and_numbers_share_one_value_space() -> None:
     assert canonical_key("abc") != canonical_key(0)
 
 
-def test_significant_floor_rounding() -> None:
-    assert floor_to_significant(Decimal("16.24681"), 4) == Decimal("16.24")
-    assert floor_to_significant(Decimal("123456.7"), 4) == Decimal("123400")
-    assert floor_to_significant(Decimal("0.00123456"), 4) == Decimal("0.001234")
-    assert floor_to_significant(Decimal("-16.24681"), 4) == Decimal("-16.24")
-    assert floor_to_significant(Decimal("8"), 4) == Decimal("8")
-    assert canonical_key(16.24681, round_digits=4) == canonical_key(
-        Decimal("16.24"), round_digits=4
+def test_decimal_place_rounding() -> None:
+    assert round_to_decimal_places(Decimal("48.32832"), 4) == Decimal("48.3283")
+    assert round_to_decimal_places(Decimal("0.84389"), 4) == Decimal("0.8439")
+    assert round_to_decimal_places(Decimal("0.84385"), 4) == Decimal("0.8439")
+    assert round_to_decimal_places(Decimal("-0.84385"), 4) == Decimal("-0.8439")
+    assert round_to_decimal_places(Decimal("123456.7"), 4) == Decimal("123456.7")
+    assert round_to_decimal_places(Decimal("-16.24681"), 4) == Decimal("-16.2468")
+    assert round_to_decimal_places(Decimal("8"), 4) == Decimal("8")
+    assert round_to_decimal_places(Decimal("0.00004"), 4) == Decimal("0")
+    assert canonical_key(48.32832, round_digits=4) == canonical_key(
+        Decimal("48.3283"), round_digits=4
     )
-    assert canonical_key(16.24681) != canonical_key(16.24)
+    assert canonical_key(48.32832) != canonical_key(48.3283)
     assert canonical_key("8.00001", round_digits=4) == canonical_key(8, round_digits=4)
     assert canonical_key(float("nan"), round_digits=4) == "null"
-    assert typed_value(16.24681, round_digits=4)["value"] == "16.24"
+    assert typed_value(48.32832, round_digits=4)["value"] == "48.3283"
 
 
 def test_temporal_values_match_across_declared_types() -> None:

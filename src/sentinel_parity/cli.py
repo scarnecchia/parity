@@ -42,7 +42,7 @@ def run_command(
         typer.Option(
             "--round",
             "--round-digits",
-            help="Floor all numeric values to N significant digits before comparison.",
+            help="Round all numeric values to N digits after the decimal point before comparison.",
         ),
     ] = None,
 ) -> None:
