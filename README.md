@@ -64,7 +64,7 @@ DuckDB validates the resource-limit strings. These settings limit DuckDB executi
 
 - Both roots must contain readable directories named `dplocal` and `msoc`.
 - Only immediate files are scanned, not nested directories. SAS inputs use `.sas7bdat`; Python inputs use `.parquet`. Extensions are case-insensitive.
-- Dataset identity is the subdirectory plus the case-folded filename stem. For example, `dplocal/People.SAS7BDAT` pairs with `dplocal/people.parquet`, not `msoc/people.parquet`.
+- Dataset identity is the subdirectory plus the case-folded filename stem; one leading `r` plus two digits and an underscore is ignored for pairing on either side. For example, `dplocal/People.SAS7BDAT` pairs with `dplocal/people.parquet`, not `msoc/people.parquet`.
 - Duplicate identities on either side are rejected. Matching-extension symlinks and non-file entries are rejected.
 - A one-sided file produces a `FAIL` dataset if readable. If there are no matched dataset pairs anywhere across the two subdirectories, the run is a configuration error instead.
 - Inputs are never modified. Output and configured temporary locations cannot equal or be inside either input root. The output directory must be absent or empty; existing reports are not overwritten.

@@ -83,3 +83,39 @@ def test_discovery_pairing_matrix() -> None:
     assert len(paired.sas_only) == len(paired.python_only) == 1
     with pytest.raises(ValueError):
         pair_files(sas + [FileEntry("dplocal", "a", "a.sas7bdat", "/e")], python)
+
+
+def test_dataset_identity_ignores_one_leading_run_prefix_on_either_side() -> None:
+    sas_prefixed = FileEntry("dplocal", "R01_Products", "R01_Products.SAS7BDAT", "/sas")
+    python_plain = FileEntry("DPLOCAL", "products", "products.parquet", "/python")
+    first = pair_files([sas_prefixed], [python_plain])
+    assert first.matched == ((sas_prefixed, python_plain),)
+
+    sas_plain = FileEntry("dplocal", "products", "products.sas7bdat", "/sas")
+    python_prefixed = FileEntry("dplocal", "r02_PRODUCTS", "r02_PRODUCTS.parquet", "/python")
+    second = pair_files([sas_plain], [python_prefixed])
+    assert second.matched == ((sas_plain, python_prefixed),)
+    assert sas_prefixed.filename == "R01_Products.SAS7BDAT"
+    assert python_prefixed.filename == "r02_PRODUCTS.parquet"
+
+
+def test_dataset_identity_strips_only_one_leading_run_prefix() -> None:
+    once = FileEntry("dplocal", "r01_r02_x", "r01_r02_x.sas7bdat", "/a")
+    assert once.key == ("dplocal", "r02_x")
+    plain = FileEntry("dplocal", "x", "x.parquet", "/b")
+    result = pair_files([once], [plain])
+    assert result.sas_only == (once,)
+    assert result.python_only == (plain,)
+
+    embedded = FileEntry("dplocal", "xr01_y", "xr01_y.sas7bdat", "/a")
+    unrelated = FileEntry("dplocal", "y", "y.parquet", "/b")
+    result = pair_files([embedded], [unrelated])
+    assert result.sas_only == (embedded,)
+    assert result.python_only == (unrelated,)
+
+
+def test_stripped_dataset_identity_collision_is_rejected() -> None:
+    prefixed = FileEntry("dplocal", "r01_x", "r01_x.sas7bdat", "/a")
+    plain = FileEntry("dplocal", "x", "x.sas7bdat", "/b")
+    with pytest.raises(ValueError, match="ambiguous case-insensitive dataset identity"):
+        pair_files([prefixed, plain], [])

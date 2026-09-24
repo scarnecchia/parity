@@ -554,6 +554,46 @@ def test_empty_intersection_with_one_sided_files_is_configuration_error(tmp_path
     assert not (tmp_path / "out" / "summary.json").exists()
 
 
+def test_prefixed_sas_filename_pairs_and_compares_end_to_end(tmp_path: Path) -> None:
+    fixture = Path(__file__).resolve().parents[1] / ".parity-fixtures" / "productsales.sas7bdat"
+    sas, python = _roots(tmp_path)
+    sas_file = sas / "dplocal" / "r01_products.sas7bdat"
+    shutil.copyfile(fixture, sas_file)
+    polars_readstat.ScanReadstat(str(sas_file)).df.collect().write_parquet(
+        python / "dplocal" / "products.parquet"
+    )
+
+    assert run(RunConfig(sas, python, tmp_path / "out")) == 0
+    dataset = json.loads((tmp_path / "out" / "summary.json").read_text())["datasets"][0]
+    assert dataset["status"] == "PASS"
+    assert dataset["name"] == "dplocal/r01_products.sas7bdat"
+    assert (dataset["sas_rows"], dataset["python_rows"], dataset["matched_pairs"]) == (
+        1440,
+        1440,
+        1440,
+    )
+
+
+def test_prefixed_parquet_filename_pairs_and_compares_end_to_end(tmp_path: Path) -> None:
+    fixture = Path(__file__).resolve().parents[1] / ".parity-fixtures" / "productsales.sas7bdat"
+    sas, python = _roots(tmp_path)
+    sas_file = sas / "dplocal" / "products.sas7bdat"
+    shutil.copyfile(fixture, sas_file)
+    polars_readstat.ScanReadstat(str(sas_file)).df.collect().write_parquet(
+        python / "dplocal" / "R01_products.parquet"
+    )
+
+    assert run(RunConfig(sas, python, tmp_path / "out")) == 0
+    dataset = json.loads((tmp_path / "out" / "summary.json").read_text())["datasets"][0]
+    assert dataset["status"] == "PASS"
+    assert dataset["name"] == "dplocal/products.sas7bdat"
+    assert (dataset["sas_rows"], dataset["python_rows"], dataset["matched_pairs"]) == (
+        1440,
+        1440,
+        1440,
+    )
+
+
 def test_uppercase_sas_extension_reads_real_fixture_pair(tmp_path: Path) -> None:
     fixture = Path(__file__).resolve().parents[1] / ".parity-fixtures" / "productsales.sas7bdat"
     sas, python = _roots(tmp_path)

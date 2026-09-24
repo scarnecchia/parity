@@ -3,7 +3,10 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+
+_IDENTITY_PREFIX = re.compile(r"^r[0-9]{2}_", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -15,7 +18,8 @@ class FileEntry:
 
     @property
     def key(self) -> tuple[str, str]:
-        return (self.directory.casefold(), self.stem.casefold())
+        identity_stem = _IDENTITY_PREFIX.sub("", self.stem, count=1)
+        return (self.directory.casefold(), identity_stem.casefold())
 
 
 @dataclass(frozen=True)
