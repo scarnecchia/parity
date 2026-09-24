@@ -49,6 +49,7 @@ def run(config: RunConfig) -> int:
     preview_truncation: dict[str, dict[str, int]] = {}
     fatal = False
     any_fail = bool(pairing.sas_only or pairing.python_only)
+    any_warn = False
     try:
         for entry in pairing.sas_only:
             ident = uuid.uuid4().hex
@@ -147,6 +148,7 @@ def run(config: RunConfig) -> int:
                 )
                 details[ident] = Path(result["details_path"])
                 any_fail |= result["status"] == "FAIL"
+                any_warn |= result["status"] == "WARN"
                 metadata = {
                     "sas": {
                         "columns": sas_stage["original_columns"],
@@ -176,6 +178,7 @@ def run(config: RunConfig) -> int:
                         "sas_only": result["sas_only"],
                         "python_only": result["python_only"],
                         "row_order_mismatches": result["order_mismatches"],
+                        "type_mismatched_columns": result["type_mismatched_columns"],
                         "detail_complete": True,
                         "metadata": metadata,
                     }
@@ -200,7 +203,7 @@ def run(config: RunConfig) -> int:
                         "metadata": {},
                     }
                 )
-        status = "ERROR" if fatal else ("FAIL" if any_fail else "PASS")
+        status = "ERROR" if fatal else ("FAIL" if any_fail else ("WARN" if any_warn else "PASS"))
         datasets.sort(key=lambda item: item["name"].casefold())
         summary = {
             "schema_version": 1,

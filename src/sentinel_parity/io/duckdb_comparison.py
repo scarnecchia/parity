@@ -63,6 +63,7 @@ def compare(
                 "sas_only": left["rows"],
                 "python_only": right["rows"],
                 "order_mismatches": 0,
+                "type_mismatched_columns": [],
                 "details_path": detail_path,
             }
         keycols = [f"k_{name}" for name in left_columns]
@@ -126,6 +127,19 @@ def compare(
                 payload.append((s_ord, p_ord, rank, json.dumps(diffs)))
         if payload:
             connection.executemany("INSERT INTO annotations VALUES (?, ?, ?, ?)", payload)
+        crossed = [
+            name
+            for name in left_columns
+            if {_dtype_kind(left["types"][name]), _dtype_kind(right["types"][name])}
+            == {"number", "text"}
+        ]
+        crossed_keys = set(crossed)
+        warn = (
+            sas_only > 0
+            and sas_only == python_only
+            and len(payload) == sas_only
+            and all(set(json.loads(diffs)) <= crossed_keys for _, _, _, diffs in payload)
+        )
         order_row = connection.execute(
             "SELECT count(*) FROM sas_ranked l JOIN python_ranked r ON "
             f"{equality} WHERE l.ordinal != r.ordinal"
@@ -181,16 +195,29 @@ def compare(
                                 + "\n"
                             )
         return {
-            "status": "PASS" if sas_only == 0 and python_only == 0 else "FAIL",
+            "status": "WARN"
+            if warn
+            else ("PASS" if sas_only == 0 and python_only == 0 else "FAIL"),
             "reason": None,
             "matched": matched,
             "sas_only": sas_only,
             "python_only": python_only,
             "order_mismatches": order_mismatches,
+            "type_mismatched_columns": crossed,
             "details_path": detail_path,
         }
     finally:
         connection.close()
+
+
+def _dtype_kind(value: str) -> str:
+    """Coarse value-domain kind: number, text, or other."""
+    text = value.casefold().strip()
+    if text.startswith(("int", "uint", "float", "decimal")):
+        return "number"
+    if text.startswith(("string", "large_string", "utf8", "categorical", "enum")):
+        return "text"
+    return "other"
 
 
 def _unsupported(value: str) -> bool:

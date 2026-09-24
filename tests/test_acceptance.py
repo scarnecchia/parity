@@ -1507,6 +1507,68 @@ def test_row_order_flag_in_report(tmp_path: Path) -> None:
     assert "Row order differs from the Parquet file" in html
 
 
+def test_type_crossed_columns_warn_instead_of_fail(tmp_path: Path) -> None:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from sentinel_parity.io.duckdb_comparison import compare
+    from sentinel_parity.io.staging import stage
+
+    left_path, right_path = tmp_path / "left.parquet", tmp_path / "right.parquet"
+    pq.write_table(pa.table({"n": [1, 2], "keep": ["a", "b"]}), left_path)
+    pq.write_table(pa.table({"n": ["1", "x"], "keep": ["a", "b"]}), right_path)
+    work = tmp_path / "work"
+    work.mkdir()
+    result = compare(
+        stage(left_path, "python", work),
+        stage(right_path, "python", work),
+        work,
+        "128MB",
+        "2GB",
+        "warn-test",
+    )
+    # The only mismatch is text "x" vs numeric 2 inside a character-vs-
+    # numeric column; the same-typed column matches fully.
+    assert result["status"] == "WARN"
+    assert (result["matched"], result["sas_only"], result["python_only"]) == (1, 1, 1)
+    assert result["type_mismatched_columns"] == ["n"]
+
+    pq.write_table(pa.table({"n": [1, 2], "keep": ["a", "BAD"]}), left_path)
+    mixed = compare(
+        stage(left_path, "python", work),
+        stage(right_path, "python", work),
+        work,
+        "128MB",
+        "2GB",
+        "mixed-test",
+    )
+    # A same-typed value mismatch is still a FAIL.
+    assert mixed["status"] == "FAIL"
+
+
+def test_type_crossed_warn_run(tmp_path: Path) -> None:
+    sas, python = _roots(tmp_path)
+    fixture = Path(__file__).resolve().parents[1] / ".parity-fixtures" / "productsales.sas7bdat"
+    shutil.copyfile(fixture, sas / "dplocal" / "warned.sas7bdat")
+    frame = polars_readstat.ScanReadstat(str(sas / "dplocal" / "warned.sas7bdat")).df.collect()
+    altered = frame.with_columns(
+        pl.when(pl.int_range(0, pl.len()) == 0)
+        .then(pl.lit("unknown"))
+        .otherwise(pl.col("YEAR").cast(pl.String))
+        .alias("YEAR")
+    )
+    altered.write_parquet(python / "dplocal" / "warned.parquet")
+    assert run(RunConfig(sas, python, tmp_path / "out")) == 0
+    summary = json.loads((tmp_path / "out" / "summary.json").read_text())
+    dataset = summary["datasets"][0]
+    assert dataset["status"] == "WARN"
+    assert summary["status"] == "WARN"
+    assert dataset["type_mismatched_columns"] == ["year"]
+    html = (tmp_path / "out" / "index.html").read_text()
+    assert "Character vs numeric columns: year" in html
+    assert "WARN" in html
+
+
 def test_missing_and_text_forms_match_across_types(tmp_path: Path) -> None:
     import pyarrow as pa
     import pyarrow.parquet as pq

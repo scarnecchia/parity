@@ -76,11 +76,13 @@ DuckDB validates the resource-limit strings. These settings limit DuckDB executi
 
 | Code | Meaning |
 | --- | --- |
-| `0` | All discovered datasets pass; there are no one-sided files or unmatched row occurrences. |
+| `0` | All discovered datasets pass — including datasets that warned only on character-vs-numeric column differences. |
 | `1` | Comparisons completed, but at least one dataset failed: one-sided file, schema/family mismatch, or unmatched row occurrences. |
 | `2` | Configuration, input, unsupported-data, resource, report-writing, or interruption error. Dataset errors produce overall `ERROR` when a report can be written. |
 
-Errors take precedence over comparison failures: `ERROR` / `2` overrides `FAIL` / `1`, which overrides `PASS` / `0`. A configuration or report-writing error may leave no complete report.
+Errors take precedence over comparison failures: `ERROR` / `2` overrides `FAIL` / `1`, which overrides `WARN` / `PASS` / `0`. A configuration or report-writing error may leave no complete report.
+
+A completed comparison reports `WARN` instead of `FAIL` when every unmatched occurrence is explained by a character-vs-numeric column (one side numeric, the other text) — remaining differences like unparseable text in an otherwise numeric column. The dataset entry lists those columns in `type_mismatched_columns`, and `index.html` notes them at the top of the dataset section.
 
 ### Report files
 

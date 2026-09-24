@@ -20,6 +20,8 @@
   --fail-bg: oklch(96.5% 0.022 27);
   --error: oklch(42% 0.1 70);
   --error-bg: oklch(96.5% 0.045 80);
+  --warn: oklch(45% 0.11 90);
+  --warn-bg: oklch(96.5% 0.05 95);
   --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
 }
 * { box-sizing: border-box; }
@@ -58,6 +60,7 @@ a { color: inherit; }
 .pill.PASS { color: var(--pass); background: var(--pass-bg); }
 .pill.FAIL { color: var(--fail); background: var(--fail-bg); }
 .pill.ERROR { color: var(--error); background: var(--error-bg); }
+.pill.WARN { color: var(--warn); background: var(--warn-bg); }
 
 /* Dataset navigation */
 .dataset-nav {
@@ -82,6 +85,7 @@ a { color: inherit; }
 .dataset-nav a.PASS::before { background: var(--pass); }
 .dataset-nav a.FAIL::before { background: var(--fail); }
 .dataset-nav a.ERROR::before { background: var(--error); }
+.dataset-nav a.WARN::before { background: var(--warn); }
 .dataset-nav a span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dataset-nav a:hover { border-color: var(--ink-faint); }
 @media (prefers-reduced-motion: reduce) { .dataset-nav a { transition: none; } }
@@ -123,6 +127,11 @@ section h2 {
   background: var(--error-bg);
   color: var(--error);
   font: 500 0.8125rem/1.5 var(--mono);
+}
+.type-note {
+  margin: 0.75rem 0 0;
+  font: 500 0.8125rem/1.5 var(--mono);
+  color: var(--ink-muted);
 }
 .stat { display: flex; flex-direction: column; gap: 0.0625rem; min-width: 3.5rem; }
 .stat .label {
@@ -238,7 +247,7 @@ footer .build { font: 0.75rem/1.6 var(--mono); color: var(--ink-faint); }
   <div class="masthead-row">
     <span class="pill {{ summary.status }}">{{ summary.status }}</span>
     {% set statuses = summary.datasets|map(attribute='status')|list %}
-    <span class="run-meta">{{ statuses|length }} datasets · {{ statuses.count("PASS") }} passed · {{ statuses.count("FAIL") }} failed · {{ statuses.count("ERROR") }} error</span>
+    <span class="run-meta">{{ statuses|length }} datasets · {{ statuses.count("PASS") }} passed · {{ statuses.count("WARN") }} warned · {{ statuses.count("FAIL") }} failed · {{ statuses.count("ERROR") }} error</span>
   </div>
 </header>
 {% if summary.datasets|length > 1 %}
@@ -256,6 +265,9 @@ footer .build { font: 0.75rem/1.6 var(--mono); color: var(--ink-faint); }
   </header>
   {% if dataset.row_order_mismatches %}
   <p class="order-flag">Row order differs from the Parquet file — {{ dataset.row_order_mismatches }} matched rows are misplaced</p>
+  {% endif %}
+  {% if dataset.type_mismatched_columns %}
+  <p class="type-note">Character vs numeric columns: {{ dataset.type_mismatched_columns|join(", ") }}</p>
   {% endif %}
   {% set stats = [
     ("SAS rows", dataset.sas_rows, false),
