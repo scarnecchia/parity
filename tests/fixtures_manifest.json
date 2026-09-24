@@ -1,0 +1,31 @@
+{
+  "pandas_commit": "e2674416e46dad28ffe2b8fba4359916f2857ef5",
+  "pyreadstat_commit": "12cc1495d468ae8a170c57cce7557c147b972eac",
+  "fixtures": {
+    "productsales.sas7bdat": {
+      "url": "https://raw.githubusercontent.com/pandas-dev/pandas/e2674416e46dad28ffe2b8fba4359916f2857ef5/pandas/tests/io/sas/data/productsales.sas7bdat",
+      "sha256": "0b787c81d8d279587393452cd9431fd25627f9874c7cc0f7163d11c49be2773a"
+    },
+    "productsales.csv": {
+      "url": "https://raw.githubusercontent.com/pandas-dev/pandas/e2674416e46dad28ffe2b8fba4359916f2857ef5/pandas/tests/io/sas/data/productsales.csv",
+      "sha256": "d74efc830de33380d68c6b39aa3a4f1a52c17769c6109cc2a39475ed22278718"
+    },
+    "datetime.sas7bdat": {
+      "url": "https://raw.githubusercontent.com/pandas-dev/pandas/e2674416e46dad28ffe2b8fba4359916f2857ef5/pandas/tests/io/sas/data/datetime.sas7bdat",
+      "sha256": "c50dc7ca83530fe20520f56dfabad22bd5ce42cb78fef8e5d1133b57342c3a26"
+    },
+    "datetime.csv": {
+      "url": "https://raw.githubusercontent.com/pandas-dev/pandas/e2674416e46dad28ffe2b8fba4359916f2857ef5/pandas/tests/io/sas/data/datetime.csv",
+      "sha256": "e822ffcc69d8738b2380450ed9e6c99260007881b57b530354578d7ae2eef1ad"
+    },
+    "dates_null.sas7bdat": {
+      "url": "https://raw.githubusercontent.com/pandas-dev/pandas/e2674416e46dad28ffe2b8fba4359916f2857ef5/pandas/tests/io/sas/data/dates_null.sas7bdat",
+      "sha256": "c54ec8920241b21eb98343fc407c0e3566626ad1f6d700274ec56c7dcac1dba4"
+    },
+    "missing_test.sas7bdat": {
+      "url": "https://raw.githubusercontent.com/Roche/pyreadstat/12cc1495d468ae8a170c57cce7557c147b972eac/test_data/missing_data/missing_test.sas7bdat",
+      "sha256": "620f8eac41710b7ea4293a5ab4a0fb8d1fbc886fa5fa2d0d2165f45a7a10865c",
+      "expected_null_codes": [".A", ".B", ".C", ".X", ".Y", ".Z", "._"]
+    }
+  }
+}

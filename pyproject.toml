@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=75,<82", "wheel>=0.45,<1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sentinel-parity"
+version = "0.1.0"
+description = "Exact, duplicate-aware SAS7BDAT to Parquet comparison reports"
+readme = "README.md"
+requires-python = ">=3.12.13"
+dependencies = [
+  "typer>=0.15,<1",
+  "polars-readstat==0.21.1",
+  "polars>=1.44,<2",
+  "pyarrow>=20,<25",
+  "duckdb>=1.2,<2",
+  "jinja2>=3.1,<4",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3,<9", "hypothesis>=6.120,<7", "ruff>=0.12,<1", "mypy>=1.15,<2", "build>=1.2,<2"]
+
+[project.scripts]
+parity = "sentinel_parity.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+sentinel_parity = ["resources/*.html"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "TCH"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+mypy_path = "src"
+plugins = []
+exclude = ["tests"]
+
+[[tool.mypy.overrides]]
+module = ["polars_readstat.*", "duckdb.*", "pyarrow.*", "typer.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+markers = ["integration: uses real files or external fixture cache", "slow: resource-intensive workload"]
+testpaths = ["tests"]

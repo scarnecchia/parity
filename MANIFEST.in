@@ -1,0 +1,4 @@
+include README.md
+include DEVELOPMENT-RESULTS.md
+include AGENTS.md
+recursive-include tests *.py *.json
