@@ -65,6 +65,7 @@ def run(config: RunConfig) -> int:
                     config.batch_size,
                     "missing_counterpart",
                     reader_path=str(staged_sas),
+                    round_digits=config.round_digits,
                 )
                 details[ident] = detail
                 previews[ident], preview_truncation[ident] = _preview(detail, config.preview_rows)
@@ -93,7 +94,13 @@ def run(config: RunConfig) -> int:
                 rows = _row_count(entry.path, "python")
                 metadata = _metadata(entry.path, "python")
                 _write_single_side_failure(
-                    detail, ident, entry, "python", config.batch_size, "missing_counterpart"
+                    detail,
+                    ident,
+                    entry,
+                    "python",
+                    config.batch_size,
+                    "missing_counterpart",
+                    round_digits=config.round_digits,
                 )
                 details[ident] = detail
                 previews[ident], preview_truncation[ident] = _preview(detail, config.preview_rows)
@@ -120,8 +127,16 @@ def run(config: RunConfig) -> int:
             dataset_work = run_temp / f"dataset-{ident}"
             dataset_work.mkdir()
             try:
-                sas_stage = stage(Path(sas.path), "sas", dataset_work, config.batch_size)
-                python_stage = stage(Path(python.path), "python", dataset_work, config.batch_size)
+                sas_stage = stage(
+                    Path(sas.path), "sas", dataset_work, config.batch_size, config.round_digits
+                )
+                python_stage = stage(
+                    Path(python.path),
+                    "python",
+                    dataset_work,
+                    config.batch_size,
+                    config.round_digits,
+                )
                 result = compare(
                     sas_stage,
                     python_stage,
@@ -185,6 +200,7 @@ def run(config: RunConfig) -> int:
                     }
                 )
         status = "ERROR" if fatal else ("FAIL" if any_fail else "PASS")
+        datasets.sort(key=lambda item: item["name"].casefold())
         summary = {
             "schema_version": 1,
             "status": status,
@@ -194,6 +210,7 @@ def run(config: RunConfig) -> int:
                 "max_temp_size": config.max_temp_size,
                 "batch_size": config.batch_size,
                 "preview_rows": config.preview_rows,
+                "round_digits": config.round_digits,
             },
             "datasets": datasets,
             "preview_truncation": preview_truncation,
@@ -241,6 +258,7 @@ def _write_single_side_failure(
     reason: str,
     *,
     reader_path: str | None = None,
+    round_digits: int | None = None,
 ) -> None:
     if side == "sas":
         import polars_readstat
@@ -278,7 +296,9 @@ def _write_single_side_failure(
                     ]
                 else:
                     encoded_columns[normalized] = [
-                        json.loads(_encode_scalar(value)) if value is not None else None
+                        json.loads(_encode_scalar(value, round_digits=round_digits))
+                        if value is not None
+                        else None
                         for value in array.to_pylist()
                     ]
             for row_index in range(batch.height):

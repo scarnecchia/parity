@@ -8,7 +8,12 @@ from hypothesis import strategies as st
 
 from sentinel_parity.core.discovery import FileEntry, pair_files
 from sentinel_parity.core.names import normalize_columns, normalize_name
-from sentinel_parity.core.value_encoding import canonical_key, numeric_key, typed_value
+from sentinel_parity.core.value_encoding import (
+    canonical_key,
+    floor_to_significant,
+    numeric_key,
+    typed_value,
+)
 
 
 def test_schema_name_alignment() -> None:
@@ -51,6 +56,21 @@ def test_text_and_numbers_share_one_value_space() -> None:
     assert canonical_key("16.2") != canonical_key(16)
     assert canonical_key("abc") == "s:abc"
     assert canonical_key("abc") != canonical_key(0)
+
+
+def test_significant_floor_rounding() -> None:
+    assert floor_to_significant(Decimal("16.24681"), 4) == Decimal("16.24")
+    assert floor_to_significant(Decimal("123456.7"), 4) == Decimal("123400")
+    assert floor_to_significant(Decimal("0.00123456"), 4) == Decimal("0.001234")
+    assert floor_to_significant(Decimal("-16.24681"), 4) == Decimal("-16.24")
+    assert floor_to_significant(Decimal("8"), 4) == Decimal("8")
+    assert canonical_key(16.24681, round_digits=4) == canonical_key(
+        Decimal("16.24"), round_digits=4
+    )
+    assert canonical_key(16.24681) != canonical_key(16.24)
+    assert canonical_key("8.00001", round_digits=4) == canonical_key(8, round_digits=4)
+    assert canonical_key(float("nan"), round_digits=4) == "null"
+    assert typed_value(16.24681, round_digits=4)["value"] == "16.24"
 
 
 def test_temporal_values_match_across_declared_types() -> None:

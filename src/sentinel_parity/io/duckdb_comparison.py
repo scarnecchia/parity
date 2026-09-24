@@ -102,35 +102,37 @@ def compare(
                 f"AS pair_rank FROM {side}_excess"
             )
         connection.execute(
-            "CREATE TABLE annotations(s_ordinal BIGINT, p_ordinal BIGINT, diffs VARCHAR)"
+            "CREATE TABLE annotations("
+            "s_ordinal BIGINT, p_ordinal BIGINT, pair_rank BIGINT, diffs VARCHAR)"
         )
         left_keys = ", ".join(f"l.{quote_identifier(k)} AS lk{i}" for i, k in enumerate(keycols))
         right_keys = ", ".join(f"r.{quote_identifier(k)} AS rk{i}" for i, k in enumerate(keycols))
         pair_rows = connection.execute(
-            f"SELECT l.ordinal, r.ordinal, {left_keys}, {right_keys} FROM sas_pair l "
-            f"FULL JOIN python_pair r ON l.pair_rank = r.pair_rank"
+            f"SELECT l.ordinal, r.ordinal, l.pair_rank, {left_keys}, {right_keys} "
+            f"FROM sas_pair l FULL JOIN python_pair r ON l.pair_rank = r.pair_rank"
         ).fetchall()
         payload = []
         for prow in pair_rows:
-            s_ord, p_ord = prow[0], prow[1]
+            s_ord, p_ord, rank = prow[0], prow[1], prow[2]
             if s_ord is None or p_ord is None:
                 continue
             diffs = [
                 name
                 for i, name in enumerate(left_columns)
-                if prow[2 + i] != prow[2 + len(left_columns) + i]
+                if prow[3 + i] != prow[3 + len(left_columns) + i]
             ]
             if diffs:
-                payload.append((s_ord, p_ord, json.dumps(diffs)))
+                payload.append((s_ord, p_ord, rank, json.dumps(diffs)))
         if payload:
-            connection.executemany("INSERT INTO annotations VALUES (?, ?, ?)", payload)
+            connection.executemany("INSERT INTO annotations VALUES (?, ?, ?, ?)", payload)
         selected = ", ".join(
             f"l.{quote_identifier('v_' + n)} AS l_{i}, r.{quote_identifier('v_' + n)} AS r_{i}"
             for i, n in enumerate(left_columns)
         )
         query = (
             "SELECT l.ordinal AS l_ord, r.ordinal AS r_ord, "
-            "sa.diffs AS s_diffs, pa.diffs AS p_diffs, "
+            "sa.diffs AS s_diffs, sa.pair_rank AS s_pair, "
+            "pa.diffs AS p_diffs, pa.pair_rank AS p_pair, "
             f"{selected} FROM sas_ranked l FULL OUTER JOIN python_ranked r ON {equality} "
             "LEFT JOIN annotations sa ON sa.s_ordinal = l.ordinal "
             "LEFT JOIN annotations pa ON pa.p_ordinal = r.ordinal"
@@ -141,9 +143,9 @@ def compare(
             while rows := cursor.fetchmany(1024):
                 for row in rows:
                     l_ord, r_ord = row[0], row[1]
-                    for side, ordinal, has_other, offset, diffs in (
-                        ("sas", l_ord, r_ord is not None, 4, row[2]),
-                        ("python", r_ord, l_ord is not None, 5, row[3]),
+                    for side, ordinal, has_other, offset, diffs, pair_id in (
+                        ("sas", l_ord, r_ord is not None, 6, row[2], row[3]),
+                        ("python", r_ord, l_ord is not None, 7, row[4], row[5]),
                     ):
                         if ordinal is not None:
                             values = {
@@ -163,6 +165,7 @@ def compare(
                             }
                             if not has_other:
                                 record["differing_columns"] = json.loads(diffs) if diffs else None
+                                record["pair_id"] = pair_id
                             output.write(
                                 json.dumps(
                                     record,

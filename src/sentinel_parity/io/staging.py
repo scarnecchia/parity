@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 from sentinel_parity.core.value_encoding import (
     canonical_key,
+    rounded_display,
     temporal_ns_iso,
     temporal_ns_key,
     typed_value,
@@ -29,7 +30,13 @@ from sentinel_parity.core.value_encoding import (
 BATCH_ROWS = 65536
 
 
-def _encode_scalar(value: Any, *, epoch_ns: int | None = None, timezone_aware: bool = False) -> str:
+def _encode_scalar(
+    value: Any,
+    *,
+    epoch_ns: int | None = None,
+    timezone_aware: bool = False,
+    round_digits: int | None = None,
+) -> str:
     if epoch_ns is not None:
         return json.dumps(
             {"type": "timestamp", "value": temporal_ns_iso(epoch_ns, timezone_aware)},
@@ -47,15 +54,28 @@ def _encode_scalar(value: Any, *, epoch_ns: int | None = None, timezone_aware: b
             {"type": "date", "value": value.isoformat()}, ensure_ascii=False, separators=(",", ":")
         )
     if isinstance(value, Decimal):
+        shown = rounded_display(value, round_digits)
         return json.dumps(
-            {"type": "decimal", "value": str(value), "canonical": canonical_key(value)},
+            {
+                "type": "decimal",
+                "value": str(shown),
+                "canonical": canonical_key(value, round_digits=round_digits),
+            },
             ensure_ascii=False,
             separators=(",", ":"),
         )
-    return json.dumps(typed_value(value), ensure_ascii=False, separators=(",", ":"))
+    return json.dumps(
+        typed_value(value, round_digits=round_digits), ensure_ascii=False, separators=(",", ":")
+    )
 
 
-def stage(source: Path, kind: str, work: Path, batch_size: int = BATCH_ROWS) -> dict[str, Any]:
+def stage(
+    source: Path,
+    kind: str,
+    work: Path,
+    batch_size: int = BATCH_ROWS,
+    round_digits: int | None = None,
+) -> dict[str, Any]:
     artifact_id = uuid.uuid4().hex
     raw_path = work / f"{artifact_id}.raw.parquet"
     canonical_path = work / f"{artifact_id}.parquet"
@@ -110,8 +130,8 @@ def stage(source: Path, kind: str, work: Path, batch_size: int = BATCH_ROWS) -> 
                 ]
             else:
                 values = arrow_array.to_pylist()
-                keys = [canonical_key(value) for value in values]
-                payloads = [_encode_scalar(value) for value in values]
+                keys = [canonical_key(value, round_digits=round_digits) for value in values]
+                payloads = [_encode_scalar(value, round_digits=round_digits) for value in values]
             arrays.extend((pa.array(keys, type=pa.string()), pa.array(payloads, type=pa.string())))
             fields.extend(
                 (

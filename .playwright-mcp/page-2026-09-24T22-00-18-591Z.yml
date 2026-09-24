@@ -1,0 +1,1006 @@
+- generic [active] [ref=e1]:
+  - banner [ref=e2]:
+    - heading "Sentinel parity report" [level=1] [ref=e3]
+    - generic [ref=e4]:
+      - generic [ref=e5]: ERROR
+      - generic [ref=e6]: 6 datasets · 1 passed · 4 failed · 1 error
+  - navigation "Datasets" [ref=e7]:
+    - link "dplocal/matched.sas7bdat" [ref=e8] [cursor=pointer]:
+      - /url: "#dataset-e3aad3a4b4904b48bdaa642a89997757"
+    - link "dplocal/schema.sas7bdat" [ref=e10] [cursor=pointer]:
+      - /url: "#dataset-59981612f89b4d6688b59fae173d4164"
+    - link "dplocal/shifted.sas7bdat" [ref=e12] [cursor=pointer]:
+      - /url: "#dataset-b8833d654eb24bccb5e6b6dc8c11e939"
+    - link "dplocal/sparse.sas7bdat" [ref=e14] [cursor=pointer]:
+      - /url: "#dataset-8485d093727b4b72b3279e539010d4e9"
+    - link "msoc/broken.sas7bdat" [ref=e16] [cursor=pointer]:
+      - /url: "#dataset-e1004a1434004cda82d82e49b61fef80"
+    - link "msoc/orphan.parquet" [ref=e18] [cursor=pointer]:
+      - /url: "#dataset-be7dd5ab44854a399f1a861c4e783e0b"
+  - generic [ref=e20]:
+    - generic [ref=e21]:
+      - heading "dplocal/matched.sas7bdat" [level=2] [ref=e22]
+      - generic [ref=e23]: PASS
+    - generic [ref=e24]:
+      - generic [ref=e25]:
+        - generic [ref=e26]: SAS rows
+        - generic [ref=e27]: "1440"
+      - generic [ref=e28]:
+        - generic [ref=e29]: Parquet rows
+        - generic [ref=e30]: "1440"
+      - generic [ref=e31]:
+        - generic [ref=e32]: Matched
+        - generic [ref=e33]: "1440"
+      - generic [ref=e34]:
+        - generic [ref=e35]: SAS-only
+        - generic [ref=e36]: "0"
+      - generic [ref=e37]:
+        - generic [ref=e38]: Parquet-only
+        - generic [ref=e39]: "0"
+    - paragraph [ref=e40]:
+      - link "Row-level details (JSONL)" [ref=e41] [cursor=pointer]:
+        - /url: details/e3aad3a4b4904b48bdaa642a89997757.jsonl
+    - group [ref=e42]:
+      - generic "Schema and reader metadata" [ref=e43] [cursor=pointer]
+  - generic [ref=e44]:
+    - generic [ref=e45]:
+      - heading "dplocal/schema.sas7bdat" [level=2] [ref=e46]
+      - generic [ref=e47]: FAIL
+      - generic [ref=e48]: schema_columns_differ
+    - generic [ref=e49]:
+      - generic [ref=e50]:
+        - generic [ref=e51]: SAS rows
+        - generic [ref=e52]: "1440"
+      - generic [ref=e53]:
+        - generic [ref=e54]: Parquet rows
+        - generic [ref=e55]: "5"
+      - generic [ref=e56]:
+        - generic [ref=e57]: Matched
+        - generic [ref=e58]: "0"
+      - generic [ref=e59]:
+        - generic [ref=e60]: SAS-only
+        - generic [ref=e61]: "1440"
+      - generic [ref=e62]:
+        - generic [ref=e63]: Parquet-only
+        - generic [ref=e64]: "5"
+    - paragraph [ref=e65]:
+      - link "Row-level details (JSONL)" [ref=e66] [cursor=pointer]:
+        - /url: details/59981612f89b4d6688b59fae173d4164.jsonl
+    - group [ref=e67]:
+      - generic "Schema and reader metadata" [ref=e68] [cursor=pointer]
+    - generic [ref=e69]:
+      - heading "Mismatch preview — omitted 1432 SAS and 0 Parquet mismatches" [level=3] [ref=e70]
+      - table [ref=e71]:
+        - rowgroup [ref=e72]:
+          - row [ref=e73]:
+            - columnheader "Rows" [ref=e74]
+            - columnheader "Reason" [ref=e75]
+            - columnheader "SAS values" [ref=e76]
+            - columnheader "Parquet values" [ref=e77]
+        - rowgroup [ref=e78]:
+          - row [ref=e79]:
+            - cell "sas 0" [ref=e80]:
+              - generic [ref=e81]: sas
+              - generic [ref=e82]: "0"
+            - cell "schema_columns_differ" [ref=e83]
+            - cell "actual=925.0 country=CANADA division=EDUCATION extra=absent month=1993-01-01 predict=850.0 prodtype=FURNITURE product=SOFA quarter=1.0 region=EAST year=1993.0" [ref=e84]:
+              - generic [ref=e85]:
+                - generic [ref=e86]: actual=925.0
+                - generic [ref=e87]: country=CANADA
+                - generic [ref=e88]: division=EDUCATION
+                - generic [ref=e89]: extra=absent
+                - generic [ref=e90]: month=1993-01-01
+                - generic [ref=e91]: predict=850.0
+                - generic [ref=e92]: prodtype=FURNITURE
+                - generic [ref=e93]: product=SOFA
+                - generic [ref=e94]: quarter=1.0
+                - generic [ref=e95]: region=EAST
+                - generic [ref=e96]: year=1993.0
+            - cell [ref=e97]
+          - row [ref=e98]:
+            - cell "sas 1" [ref=e99]:
+              - generic [ref=e100]: sas
+              - generic [ref=e101]: "1"
+            - cell "schema_columns_differ" [ref=e102]
+            - cell "actual=999.0 country=CANADA division=EDUCATION extra=absent month=1993-02-01 predict=297.0 prodtype=FURNITURE product=SOFA quarter=1.0 region=EAST year=1993.0" [ref=e103]:
+              - generic [ref=e104]:
+                - generic [ref=e105]: actual=999.0
+                - generic [ref=e106]: country=CANADA
+                - generic [ref=e107]: division=EDUCATION
+                - generic [ref=e108]: extra=absent
+                - generic [ref=e109]: month=1993-02-01
+                - generic [ref=e110]: predict=297.0
+                - generic [ref=e111]: prodtype=FURNITURE
+                - generic [ref=e112]: product=SOFA
+                - generic [ref=e113]: quarter=1.0
+                - generic [ref=e114]: region=EAST
+                - generic [ref=e115]: year=1993.0
+            - cell [ref=e116]
+          - row [ref=e117]:
+            - cell "sas 2" [ref=e118]:
+              - generic [ref=e119]: sas
+              - generic [ref=e120]: "2"
+            - cell "schema_columns_differ" [ref=e121]
+            - cell "actual=608.0 country=CANADA division=EDUCATION extra=absent month=1993-03-01 predict=846.0 prodtype=FURNITURE product=SOFA quarter=1.0 region=EAST year=1993.0" [ref=e122]:
+              - generic [ref=e123]:
+                - generic [ref=e124]: actual=608.0
+                - generic [ref=e125]: country=CANADA
+                - generic [ref=e126]: division=EDUCATION
+                - generic [ref=e127]: extra=absent
+                - generic [ref=e128]: month=1993-03-01
+                - generic [ref=e129]: predict=846.0
+                - generic [ref=e130]: prodtype=FURNITURE
+                - generic [ref=e131]: product=SOFA
+                - generic [ref=e132]: quarter=1.0
+                - generic [ref=e133]: region=EAST
+                - generic [ref=e134]: year=1993.0
+            - cell [ref=e135]
+          - row [ref=e136]:
+            - cell "sas 3" [ref=e137]:
+              - generic [ref=e138]: sas
+              - generic [ref=e139]: "3"
+            - cell "schema_columns_differ" [ref=e140]
+            - cell "actual=642.0 country=CANADA division=EDUCATION extra=absent month=1993-04-01 predict=533.0 prodtype=FURNITURE product=SOFA quarter=2.0 region=EAST year=1993.0" [ref=e141]:
+              - generic [ref=e142]:
+                - generic [ref=e143]: actual=642.0
+                - generic [ref=e144]: country=CANADA
+                - generic [ref=e145]: division=EDUCATION
+                - generic [ref=e146]: extra=absent
+                - generic [ref=e147]: month=1993-04-01
+                - generic [ref=e148]: predict=533.0
+                - generic [ref=e149]: prodtype=FURNITURE
+                - generic [ref=e150]: product=SOFA
+                - generic [ref=e151]: quarter=2.0
+                - generic [ref=e152]: region=EAST
+                - generic [ref=e153]: year=1993.0
+            - cell [ref=e154]
+          - row [ref=e155]:
+            - cell "sas 4" [ref=e156]:
+              - generic [ref=e157]: sas
+              - generic [ref=e158]: "4"
+            - cell "schema_columns_differ" [ref=e159]
+            - cell "actual=656.0 country=CANADA division=EDUCATION extra=absent month=1993-05-01 predict=646.0 prodtype=FURNITURE product=SOFA quarter=2.0 region=EAST year=1993.0" [ref=e160]:
+              - generic [ref=e161]:
+                - generic [ref=e162]: actual=656.0
+                - generic [ref=e163]: country=CANADA
+                - generic [ref=e164]: division=EDUCATION
+                - generic [ref=e165]: extra=absent
+                - generic [ref=e166]: month=1993-05-01
+                - generic [ref=e167]: predict=646.0
+                - generic [ref=e168]: prodtype=FURNITURE
+                - generic [ref=e169]: product=SOFA
+                - generic [ref=e170]: quarter=2.0
+                - generic [ref=e171]: region=EAST
+                - generic [ref=e172]: year=1993.0
+            - cell [ref=e173]
+          - row [ref=e174]:
+            - cell "sas 5" [ref=e175]:
+              - generic [ref=e176]: sas
+              - generic [ref=e177]: "5"
+            - cell "schema_columns_differ" [ref=e178]
+            - cell "actual=948.0 country=CANADA division=EDUCATION extra=absent month=1993-06-01 predict=486.0 prodtype=FURNITURE product=SOFA quarter=2.0 region=EAST year=1993.0" [ref=e179]:
+              - generic [ref=e180]:
+                - generic [ref=e181]: actual=948.0
+                - generic [ref=e182]: country=CANADA
+                - generic [ref=e183]: division=EDUCATION
+                - generic [ref=e184]: extra=absent
+                - generic [ref=e185]: month=1993-06-01
+                - generic [ref=e186]: predict=486.0
+                - generic [ref=e187]: prodtype=FURNITURE
+                - generic [ref=e188]: product=SOFA
+                - generic [ref=e189]: quarter=2.0
+                - generic [ref=e190]: region=EAST
+                - generic [ref=e191]: year=1993.0
+            - cell [ref=e192]
+          - row [ref=e193]:
+            - cell "sas 6" [ref=e194]:
+              - generic [ref=e195]: sas
+              - generic [ref=e196]: "6"
+            - cell "schema_columns_differ" [ref=e197]
+            - cell "actual=612.0 country=CANADA division=EDUCATION extra=absent month=1993-07-01 predict=717.0 prodtype=FURNITURE product=SOFA quarter=3.0 region=EAST year=1993.0" [ref=e198]:
+              - generic [ref=e199]:
+                - generic [ref=e200]: actual=612.0
+                - generic [ref=e201]: country=CANADA
+                - generic [ref=e202]: division=EDUCATION
+                - generic [ref=e203]: extra=absent
+                - generic [ref=e204]: month=1993-07-01
+                - generic [ref=e205]: predict=717.0
+                - generic [ref=e206]: prodtype=FURNITURE
+                - generic [ref=e207]: product=SOFA
+                - generic [ref=e208]: quarter=3.0
+                - generic [ref=e209]: region=EAST
+                - generic [ref=e210]: year=1993.0
+            - cell [ref=e211]
+          - row [ref=e212]:
+            - cell "sas 7" [ref=e213]:
+              - generic [ref=e214]: sas
+              - generic [ref=e215]: "7"
+            - cell "schema_columns_differ" [ref=e216]
+            - cell "actual=114.0 country=CANADA division=EDUCATION extra=absent month=1993-08-01 predict=564.0 prodtype=FURNITURE product=SOFA quarter=3.0 region=EAST year=1993.0" [ref=e217]:
+              - generic [ref=e218]:
+                - generic [ref=e219]: actual=114.0
+                - generic [ref=e220]: country=CANADA
+                - generic [ref=e221]: division=EDUCATION
+                - generic [ref=e222]: extra=absent
+                - generic [ref=e223]: month=1993-08-01
+                - generic [ref=e224]: predict=564.0
+                - generic [ref=e225]: prodtype=FURNITURE
+                - generic [ref=e226]: product=SOFA
+                - generic [ref=e227]: quarter=3.0
+                - generic [ref=e228]: region=EAST
+                - generic [ref=e229]: year=1993.0
+            - cell [ref=e230]
+          - row [ref=e231]:
+            - cell "python 0" [ref=e232]:
+              - generic [ref=e233]: python
+              - generic [ref=e234]: "0"
+            - cell "schema_columns_differ" [ref=e235]
+            - cell [ref=e236]
+            - cell "actual=925.0 country=CANADA division=EDUCATION extra=1 month=1993-01-01 predict=850.0 prodtype=FURNITURE product=SOFA quarter=1.0 region=EAST year=1993.0" [ref=e237]:
+              - generic [ref=e238]:
+                - generic [ref=e239]: actual=925.0
+                - generic [ref=e240]: country=CANADA
+                - generic [ref=e241]: division=EDUCATION
+                - generic [ref=e242]: extra=1
+                - generic [ref=e243]: month=1993-01-01
+                - generic [ref=e244]: predict=850.0
+                - generic [ref=e245]: prodtype=FURNITURE
+                - generic [ref=e246]: product=SOFA
+                - generic [ref=e247]: quarter=1.0
+                - generic [ref=e248]: region=EAST
+                - generic [ref=e249]: year=1993.0
+          - row [ref=e250]:
+            - cell "python 1" [ref=e251]:
+              - generic [ref=e252]: python
+              - generic [ref=e253]: "1"
+            - cell "schema_columns_differ" [ref=e254]
+            - cell [ref=e255]
+            - cell "actual=999.0 country=CANADA division=EDUCATION extra=1 month=1993-02-01 predict=297.0 prodtype=FURNITURE product=SOFA quarter=1.0 region=EAST year=1993.0" [ref=e256]:
+              - generic [ref=e257]:
+                - generic [ref=e258]: actual=999.0
+                - generic [ref=e259]: country=CANADA
+                - generic [ref=e260]: division=EDUCATION
+                - generic [ref=e261]: extra=1
+                - generic [ref=e262]: month=1993-02-01
+                - generic [ref=e263]: predict=297.0
+                - generic [ref=e264]: prodtype=FURNITURE
+                - generic [ref=e265]: product=SOFA
+                - generic [ref=e266]: quarter=1.0
+                - generic [ref=e267]: region=EAST
+                - generic [ref=e268]: year=1993.0
+          - row [ref=e269]:
+            - cell "python 2" [ref=e270]:
+              - generic [ref=e271]: python
+              - generic [ref=e272]: "2"
+            - cell "schema_columns_differ" [ref=e273]
+            - cell [ref=e274]
+            - cell "actual=608.0 country=CANADA division=EDUCATION extra=1 month=1993-03-01 predict=846.0 prodtype=FURNITURE product=SOFA quarter=1.0 region=EAST year=1993.0" [ref=e275]:
+              - generic [ref=e276]:
+                - generic [ref=e277]: actual=608.0
+                - generic [ref=e278]: country=CANADA
+                - generic [ref=e279]: division=EDUCATION
+                - generic [ref=e280]: extra=1
+                - generic [ref=e281]: month=1993-03-01
+                - generic [ref=e282]: predict=846.0
+                - generic [ref=e283]: prodtype=FURNITURE
+                - generic [ref=e284]: product=SOFA
+                - generic [ref=e285]: quarter=1.0
+                - generic [ref=e286]: region=EAST
+                - generic [ref=e287]: year=1993.0
+          - row [ref=e288]:
+            - cell "python 3" [ref=e289]:
+              - generic [ref=e290]: python
+              - generic [ref=e291]: "3"
+            - cell "schema_columns_differ" [ref=e292]
+            - cell [ref=e293]
+            - cell "actual=642.0 country=CANADA division=EDUCATION extra=1 month=1993-04-01 predict=533.0 prodtype=FURNITURE product=SOFA quarter=2.0 region=EAST year=1993.0" [ref=e294]:
+              - generic [ref=e295]:
+                - generic [ref=e296]: actual=642.0
+                - generic [ref=e297]: country=CANADA
+                - generic [ref=e298]: division=EDUCATION
+                - generic [ref=e299]: extra=1
+                - generic [ref=e300]: month=1993-04-01
+                - generic [ref=e301]: predict=533.0
+                - generic [ref=e302]: prodtype=FURNITURE
+                - generic [ref=e303]: product=SOFA
+                - generic [ref=e304]: quarter=2.0
+                - generic [ref=e305]: region=EAST
+                - generic [ref=e306]: year=1993.0
+          - row [ref=e307]:
+            - cell "python 4" [ref=e308]:
+              - generic [ref=e309]: python
+              - generic [ref=e310]: "4"
+            - cell "schema_columns_differ" [ref=e311]
+            - cell [ref=e312]
+            - cell "actual=656.0 country=CANADA division=EDUCATION extra=1 month=1993-05-01 predict=646.0 prodtype=FURNITURE product=SOFA quarter=2.0 region=EAST year=1993.0" [ref=e313]:
+              - generic [ref=e314]:
+                - generic [ref=e315]: actual=656.0
+                - generic [ref=e316]: country=CANADA
+                - generic [ref=e317]: division=EDUCATION
+                - generic [ref=e318]: extra=1
+                - generic [ref=e319]: month=1993-05-01
+                - generic [ref=e320]: predict=646.0
+                - generic [ref=e321]: prodtype=FURNITURE
+                - generic [ref=e322]: product=SOFA
+                - generic [ref=e323]: quarter=2.0
+                - generic [ref=e324]: region=EAST
+                - generic [ref=e325]: year=1993.0
+      - group [ref=e326]:
+        - generic "Raw preview values (JSON)" [ref=e327] [cursor=pointer]
+  - generic [ref=e328]:
+    - generic [ref=e329]:
+      - heading "dplocal/shifted.sas7bdat" [level=2] [ref=e330]
+      - generic [ref=e331]: FAIL
+    - generic [ref=e332]:
+      - generic [ref=e333]:
+        - generic [ref=e334]: SAS rows
+        - generic [ref=e335]: "1440"
+      - generic [ref=e336]:
+        - generic [ref=e337]: Parquet rows
+        - generic [ref=e338]: "1440"
+      - generic [ref=e339]:
+        - generic [ref=e340]: Matched
+        - generic [ref=e341]: "0"
+      - generic [ref=e342]:
+        - generic [ref=e343]: SAS-only
+        - generic [ref=e344]: "1440"
+      - generic [ref=e345]:
+        - generic [ref=e346]: Parquet-only
+        - generic [ref=e347]: "1440"
+    - paragraph [ref=e348]:
+      - link "Row-level details (JSONL)" [ref=e349] [cursor=pointer]:
+        - /url: details/b8833d654eb24bccb5e6b6dc8c11e939.jsonl
+    - group [ref=e350]:
+      - generic "Schema and reader metadata" [ref=e351] [cursor=pointer]
+    - generic [ref=e352]:
+      - heading "Mismatch preview — omitted 1432 SAS and 1432 Parquet mismatches" [level=3] [ref=e353]
+      - table [ref=e354]:
+        - rowgroup [ref=e355]:
+          - row [ref=e356]:
+            - columnheader "Rows" [ref=e357]
+            - columnheader "Reason" [ref=e358]
+            - columnheader "SAS values" [ref=e359]
+            - columnheader "Parquet values" [ref=e360]
+        - rowgroup [ref=e361]:
+          - row [ref=e362]:
+            - cell "sas / parquet 82 / —" [ref=e363]:
+              - generic [ref=e364]: sas / parquet
+              - generic [ref=e365]: 82 / —
+            - cell [ref=e366]
+            - cell "year actual=129.0 country=CANADA division=EDUCATION month=1993-11-01 predict=31.0 prodtype=OFFICE product=CHAIR quarter=4.0 region=EAST year=1993.0" [ref=e367]:
+              - generic [ref=e368]: year
+              - generic [ref=e369]:
+                - generic [ref=e370]: actual=129.0
+                - generic [ref=e371]: country=CANADA
+                - generic [ref=e372]: division=EDUCATION
+                - generic [ref=e373]: month=1993-11-01
+                - generic [ref=e374]: predict=31.0
+                - generic [ref=e375]: prodtype=OFFICE
+                - generic [ref=e376]: product=CHAIR
+                - generic [ref=e377]: quarter=4.0
+                - generic [ref=e378]: region=EAST
+                - generic [ref=e379]: year=1993.0
+            - cell [ref=e380]
+          - row [ref=e381]:
+            - cell "sas / parquet 196 / —" [ref=e382]:
+              - generic [ref=e383]: sas / parquet
+              - generic [ref=e384]: 196 / —
+            - cell [ref=e385]
+            - cell "year actual=119.0 country=CANADA division=CONSUMER month=1993-05-01 predict=435.0 prodtype=OFFICE product=CHAIR quarter=2.0 region=EAST year=1993.0" [ref=e386]:
+              - generic [ref=e387]: year
+              - generic [ref=e388]:
+                - generic [ref=e389]: actual=119.0
+                - generic [ref=e390]: country=CANADA
+                - generic [ref=e391]: division=CONSUMER
+                - generic [ref=e392]: month=1993-05-01
+                - generic [ref=e393]: predict=435.0
+                - generic [ref=e394]: prodtype=OFFICE
+                - generic [ref=e395]: product=CHAIR
+                - generic [ref=e396]: quarter=2.0
+                - generic [ref=e397]: region=EAST
+                - generic [ref=e398]: year=1993.0
+            - cell [ref=e399]
+          - row [ref=e400]:
+            - cell "sas / parquet — / 260" [ref=e401]:
+              - generic [ref=e402]: sas / parquet
+              - generic [ref=e403]: — / 260
+            - cell [ref=e404]
+            - cell [ref=e405]
+            - cell "year actual=112.0 country=CANADA division=EDUCATION month=1994-09-01 predict=263.0 prodtype=FURNITURE product=SOFA quarter=3.0 region=WEST year=1995.0" [ref=e406]:
+              - generic [ref=e407]: year
+              - generic [ref=e408]:
+                - generic [ref=e409]: actual=112.0
+                - generic [ref=e410]: country=CANADA
+                - generic [ref=e411]: division=EDUCATION
+                - generic [ref=e412]: month=1994-09-01
+                - generic [ref=e413]: predict=263.0
+                - generic [ref=e414]: prodtype=FURNITURE
+                - generic [ref=e415]: product=SOFA
+                - generic [ref=e416]: quarter=3.0
+                - generic [ref=e417]: region=WEST
+                - generic [ref=e418]: year=1995.0
+          - row [ref=e419]:
+            - cell "sas / parquet — / 352" [ref=e420]:
+              - generic [ref=e421]: sas / parquet
+              - generic [ref=e422]: — / 352
+            - cell [ref=e423]
+            - cell [ref=e424]
+            - cell "year actual=61.0 country=CANADA division=EDUCATION month=1994-05-01 predict=185.0 prodtype=OFFICE product=DESK quarter=2.0 region=WEST year=1995.0" [ref=e425]:
+              - generic [ref=e426]: year
+              - generic [ref=e427]:
+                - generic [ref=e428]: actual=61.0
+                - generic [ref=e429]: country=CANADA
+                - generic [ref=e430]: division=EDUCATION
+                - generic [ref=e431]: month=1994-05-01
+                - generic [ref=e432]: predict=185.0
+                - generic [ref=e433]: prodtype=OFFICE
+                - generic [ref=e434]: product=DESK
+                - generic [ref=e435]: quarter=2.0
+                - generic [ref=e436]: region=WEST
+                - generic [ref=e437]: year=1995.0
+          - row [ref=e438]:
+            - cell "sas / parquet 435 / —" [ref=e439]:
+              - generic [ref=e440]: sas / parquet
+              - generic [ref=e441]: 435 / —
+            - cell [ref=e442]
+            - cell "year actual=100.0 country=CANADA division=CONSUMER month=1993-04-01 predict=36.0 prodtype=OFFICE product=CHAIR quarter=2.0 region=WEST year=1993.0" [ref=e443]:
+              - generic [ref=e444]: year
+              - generic [ref=e445]:
+                - generic [ref=e446]: actual=100.0
+                - generic [ref=e447]: country=CANADA
+                - generic [ref=e448]: division=CONSUMER
+                - generic [ref=e449]: month=1993-04-01
+                - generic [ref=e450]: predict=36.0
+                - generic [ref=e451]: prodtype=OFFICE
+                - generic [ref=e452]: product=CHAIR
+                - generic [ref=e453]: quarter=2.0
+                - generic [ref=e454]: region=WEST
+                - generic [ref=e455]: year=1993.0
+            - cell [ref=e456]
+          - row [ref=e457]:
+            - cell "sas / parquet — / 550" [ref=e458]:
+              - generic [ref=e459]: sas / parquet
+              - generic [ref=e460]: — / 550
+            - cell [ref=e461]
+            - cell [ref=e462]
+            - cell "year actual=97.0 country=GERMANY division=EDUCATION month=1994-11-01 predict=313.0 prodtype=OFFICE product=TABLE quarter=4.0 region=EAST year=1995.0" [ref=e463]:
+              - generic [ref=e464]: year
+              - generic [ref=e465]:
+                - generic [ref=e466]: actual=97.0
+                - generic [ref=e467]: country=GERMANY
+                - generic [ref=e468]: division=EDUCATION
+                - generic [ref=e469]: month=1994-11-01
+                - generic [ref=e470]: predict=313.0
+                - generic [ref=e471]: prodtype=OFFICE
+                - generic [ref=e472]: product=TABLE
+                - generic [ref=e473]: quarter=4.0
+                - generic [ref=e474]: region=EAST
+                - generic [ref=e475]: year=1995.0
+          - row [ref=e476]:
+            - cell "sas / parquet 662 / —" [ref=e477]:
+              - generic [ref=e478]: sas / parquet
+              - generic [ref=e479]: 662 / —
+            - cell [ref=e480]
+            - cell "year actual=1000.0 country=GERMANY division=CONSUMER month=1994-03-01 predict=598.0 prodtype=OFFICE product=TABLE quarter=1.0 region=EAST year=1994.0" [ref=e481]:
+              - generic [ref=e482]: year
+              - generic [ref=e483]:
+                - generic [ref=e484]: actual=1000.0
+                - generic [ref=e485]: country=GERMANY
+                - generic [ref=e486]: division=CONSUMER
+                - generic [ref=e487]: month=1994-03-01
+                - generic [ref=e488]: predict=598.0
+                - generic [ref=e489]: prodtype=OFFICE
+                - generic [ref=e490]: product=TABLE
+                - generic [ref=e491]: quarter=1.0
+                - generic [ref=e492]: region=EAST
+                - generic [ref=e493]: year=1994.0
+            - cell [ref=e494]
+          - row [ref=e495]:
+            - cell "sas / parquet 730 / —" [ref=e496]:
+              - generic [ref=e497]: sas / parquet
+              - generic [ref=e498]: 730 / —
+            - cell [ref=e499]
+            - cell "year actual=111.0 country=GERMANY division=EDUCATION month=1993-11-01 predict=772.0 prodtype=FURNITURE product=SOFA quarter=4.0 region=WEST year=1993.0" [ref=e500]:
+              - generic [ref=e501]: year
+              - generic [ref=e502]:
+                - generic [ref=e503]: actual=111.0
+                - generic [ref=e504]: country=GERMANY
+                - generic [ref=e505]: division=EDUCATION
+                - generic [ref=e506]: month=1993-11-01
+                - generic [ref=e507]: predict=772.0
+                - generic [ref=e508]: prodtype=FURNITURE
+                - generic [ref=e509]: product=SOFA
+                - generic [ref=e510]: quarter=4.0
+                - generic [ref=e511]: region=WEST
+                - generic [ref=e512]: year=1993.0
+            - cell [ref=e513]
+          - row [ref=e514]:
+            - cell "sas / parquet — / 734" [ref=e515]:
+              - generic [ref=e516]: sas / parquet
+              - generic [ref=e517]: — / 734
+            - cell [ref=e518]
+            - cell [ref=e519]
+            - cell "year actual=93.0 country=GERMANY division=EDUCATION month=1994-03-01 predict=378.0 prodtype=FURNITURE product=SOFA quarter=1.0 region=WEST year=1995.0" [ref=e520]:
+              - generic [ref=e521]: year
+              - generic [ref=e522]:
+                - generic [ref=e523]: actual=93.0
+                - generic [ref=e524]: country=GERMANY
+                - generic [ref=e525]: division=EDUCATION
+                - generic [ref=e526]: month=1994-03-01
+                - generic [ref=e527]: predict=378.0
+                - generic [ref=e528]: prodtype=FURNITURE
+                - generic [ref=e529]: product=SOFA
+                - generic [ref=e530]: quarter=1.0
+                - generic [ref=e531]: region=WEST
+                - generic [ref=e532]: year=1995.0
+          - row [ref=e533]:
+            - cell "sas / parquet 816 / —" [ref=e534]:
+              - generic [ref=e535]: sas / parquet
+              - generic [ref=e536]: 816 / —
+            - cell [ref=e537]
+            - cell "year actual=100.0 country=GERMANY division=EDUCATION month=1993-01-01 predict=285.0 prodtype=OFFICE product=DESK quarter=1.0 region=WEST year=1993.0" [ref=e538]:
+              - generic [ref=e539]: year
+              - generic [ref=e540]:
+                - generic [ref=e541]: actual=100.0
+                - generic [ref=e542]: country=GERMANY
+                - generic [ref=e543]: division=EDUCATION
+                - generic [ref=e544]: month=1993-01-01
+                - generic [ref=e545]: predict=285.0
+                - generic [ref=e546]: prodtype=OFFICE
+                - generic [ref=e547]: product=DESK
+                - generic [ref=e548]: quarter=1.0
+                - generic [ref=e549]: region=WEST
+                - generic [ref=e550]: year=1993.0
+            - cell [ref=e551]
+          - row [ref=e552]:
+            - cell "sas / parquet 904 / —" [ref=e553]:
+              - generic [ref=e554]: sas / parquet
+              - generic [ref=e555]: 904 / —
+            - cell [ref=e556]
+            - cell "year actual=128.0 country=GERMANY division=CONSUMER month=1994-05-01 predict=369.0 prodtype=OFFICE product=TABLE quarter=2.0 region=WEST year=1994.0" [ref=e557]:
+              - generic [ref=e558]: year
+              - generic [ref=e559]:
+                - generic [ref=e560]: actual=128.0
+                - generic [ref=e561]: country=GERMANY
+                - generic [ref=e562]: division=CONSUMER
+                - generic [ref=e563]: month=1994-05-01
+                - generic [ref=e564]: predict=369.0
+                - generic [ref=e565]: prodtype=OFFICE
+                - generic [ref=e566]: product=TABLE
+                - generic [ref=e567]: quarter=2.0
+                - generic [ref=e568]: region=WEST
+                - generic [ref=e569]: year=1994.0
+            - cell [ref=e570]
+          - row [ref=e571]:
+            - cell "sas / parquet — / 909" [ref=e572]:
+              - generic [ref=e573]: sas / parquet
+              - generic [ref=e574]: — / 909
+            - cell [ref=e575]
+            - cell [ref=e576]
+            - cell "year actual=241.0 country=GERMANY division=CONSUMER month=1994-10-01 predict=935.0 prodtype=OFFICE product=TABLE quarter=4.0 region=WEST year=1995.0" [ref=e577]:
+              - generic [ref=e578]: year
+              - generic [ref=e579]:
+                - generic [ref=e580]: actual=241.0
+                - generic [ref=e581]: country=GERMANY
+                - generic [ref=e582]: division=CONSUMER
+                - generic [ref=e583]: month=1994-10-01
+                - generic [ref=e584]: predict=935.0
+                - generic [ref=e585]: prodtype=OFFICE
+                - generic [ref=e586]: product=TABLE
+                - generic [ref=e587]: quarter=4.0
+                - generic [ref=e588]: region=WEST
+                - generic [ref=e589]: year=1995.0
+          - row [ref=e590]:
+            - cell "sas / parquet — / 964" [ref=e591]:
+              - generic [ref=e592]: sas / parquet
+              - generic [ref=e593]: — / 964
+            - cell [ref=e594]
+            - cell [ref=e595]
+            - cell "year actual=657.0 country=U.S.A. division=EDUCATION month=1993-05-01 predict=147.0 prodtype=FURNITURE product=SOFA quarter=2.0 region=EAST year=1994.0" [ref=e596]:
+              - generic [ref=e597]: year
+              - generic [ref=e598]:
+                - generic [ref=e599]: actual=657.0
+                - generic [ref=e600]: country=U.S.A.
+                - generic [ref=e601]: division=EDUCATION
+                - generic [ref=e602]: month=1993-05-01
+                - generic [ref=e603]: predict=147.0
+                - generic [ref=e604]: prodtype=FURNITURE
+                - generic [ref=e605]: product=SOFA
+                - generic [ref=e606]: quarter=2.0
+                - generic [ref=e607]: region=EAST
+                - generic [ref=e608]: year=1994.0
+          - row [ref=e609]:
+            - cell "sas / parquet — / 1165" [ref=e610]:
+              - generic [ref=e611]: sas / parquet
+              - generic [ref=e612]: — / 1165
+            - cell [ref=e613]
+            - cell [ref=e614]
+            - cell "year actual=862.0 country=U.S.A. division=CONSUMER month=1994-02-01 predict=848.0 prodtype=OFFICE product=CHAIR quarter=1.0 region=EAST year=1995.0" [ref=e615]:
+              - generic [ref=e616]: year
+              - generic [ref=e617]:
+                - generic [ref=e618]: actual=862.0
+                - generic [ref=e619]: country=U.S.A.
+                - generic [ref=e620]: division=CONSUMER
+                - generic [ref=e621]: month=1994-02-01
+                - generic [ref=e622]: predict=848.0
+                - generic [ref=e623]: prodtype=OFFICE
+                - generic [ref=e624]: product=CHAIR
+                - generic [ref=e625]: quarter=1.0
+                - generic [ref=e626]: region=EAST
+                - generic [ref=e627]: year=1995.0
+          - row [ref=e628]:
+            - cell "sas / parquet 1345 / —" [ref=e629]:
+              - generic [ref=e630]: sas / parquet
+              - generic [ref=e631]: 1345 / —
+            - cell [ref=e632]
+            - cell "year actual=127.0 country=U.S.A. division=CONSUMER month=1993-02-01 predict=429.0 prodtype=FURNITURE product=BED quarter=1.0 region=WEST year=1993.0" [ref=e633]:
+              - generic [ref=e634]: year
+              - generic [ref=e635]:
+                - generic [ref=e636]: actual=127.0
+                - generic [ref=e637]: country=U.S.A.
+                - generic [ref=e638]: division=CONSUMER
+                - generic [ref=e639]: month=1993-02-01
+                - generic [ref=e640]: predict=429.0
+                - generic [ref=e641]: prodtype=FURNITURE
+                - generic [ref=e642]: product=BED
+                - generic [ref=e643]: quarter=1.0
+                - generic [ref=e644]: region=WEST
+                - generic [ref=e645]: year=1993.0
+            - cell [ref=e646]
+          - row [ref=e647]:
+            - cell "sas / parquet — / 1351" [ref=e648]:
+              - generic [ref=e649]: sas / parquet
+              - generic [ref=e650]: — / 1351
+            - cell [ref=e651]
+            - cell [ref=e652]
+            - cell "year actual=468.0 country=U.S.A. division=CONSUMER month=1993-08-01 predict=727.0 prodtype=FURNITURE product=BED quarter=3.0 region=WEST year=1994.0" [ref=e653]:
+              - generic [ref=e654]: year
+              - generic [ref=e655]:
+                - generic [ref=e656]: actual=468.0
+                - generic [ref=e657]: country=U.S.A.
+                - generic [ref=e658]: division=CONSUMER
+                - generic [ref=e659]: month=1993-08-01
+                - generic [ref=e660]: predict=727.0
+                - generic [ref=e661]: prodtype=FURNITURE
+                - generic [ref=e662]: product=BED
+                - generic [ref=e663]: quarter=3.0
+                - generic [ref=e664]: region=WEST
+                - generic [ref=e665]: year=1994.0
+      - group [ref=e666]:
+        - generic "Raw preview values (JSON)" [ref=e667] [cursor=pointer]
+  - generic [ref=e668]:
+    - generic [ref=e669]:
+      - heading "dplocal/sparse.sas7bdat" [level=2] [ref=e670]
+      - generic [ref=e671]: FAIL
+    - generic [ref=e672]:
+      - generic [ref=e673]:
+        - generic [ref=e674]: SAS rows
+        - generic [ref=e675]: "1440"
+      - generic [ref=e676]:
+        - generic [ref=e677]: Parquet rows
+        - generic [ref=e678]: "1440"
+      - generic [ref=e679]:
+        - generic [ref=e680]: Matched
+        - generic [ref=e681]: "1437"
+      - generic [ref=e682]:
+        - generic [ref=e683]: SAS-only
+        - generic [ref=e684]: "3"
+      - generic [ref=e685]:
+        - generic [ref=e686]: Parquet-only
+        - generic [ref=e687]: "3"
+    - paragraph [ref=e688]:
+      - link "Row-level details (JSONL)" [ref=e689] [cursor=pointer]:
+        - /url: details/8485d093727b4b72b3279e539010d4e9.jsonl
+    - group [ref=e690]:
+      - generic "Schema and reader metadata" [ref=e691] [cursor=pointer]
+    - generic [ref=e692]:
+      - heading "Mismatch preview — omitted 0 SAS and 0 Parquet mismatches" [level=3] [ref=e693]
+      - table [ref=e694]:
+        - rowgroup [ref=e695]:
+          - row [ref=e696]:
+            - columnheader "Rows" [ref=e697]
+            - columnheader "Reason" [ref=e698]
+            - columnheader "SAS values" [ref=e699]
+            - columnheader "Parquet values" [ref=e700]
+        - rowgroup [ref=e701]:
+          - row [ref=e702]:
+            - cell "sas / parquet 0 / 0" [ref=e703]:
+              - generic [ref=e704]: sas / parquet
+              - generic [ref=e705]: 0 / 0
+            - cell [ref=e706]
+            - cell "year actual=925.0 country=CANADA division=EDUCATION month=1993-01-01 predict=850.0 prodtype=FURNITURE product=SOFA quarter=1.0 region=EAST year=1993.0" [ref=e707]:
+              - generic [ref=e708]: year
+              - generic [ref=e709]:
+                - generic [ref=e710]: actual=925.0
+                - generic [ref=e711]: country=CANADA
+                - generic [ref=e712]: division=EDUCATION
+                - generic [ref=e713]: month=1993-01-01
+                - generic [ref=e714]: predict=850.0
+                - generic [ref=e715]: prodtype=FURNITURE
+                - generic [ref=e716]: product=SOFA
+                - generic [ref=e717]: quarter=1.0
+                - generic [ref=e718]: region=EAST
+                - generic [ref=e719]: year=1993.0
+            - cell "year actual=925.0 country=CANADA division=EDUCATION month=1993-01-01 predict=850.0 prodtype=FURNITURE product=SOFA quarter=1.0 region=EAST year=1999.0" [ref=e720]:
+              - generic [ref=e721]: year
+              - generic [ref=e722]:
+                - generic [ref=e723]: actual=925.0
+                - generic [ref=e724]: country=CANADA
+                - generic [ref=e725]: division=EDUCATION
+                - generic [ref=e726]: month=1993-01-01
+                - generic [ref=e727]: predict=850.0
+                - generic [ref=e728]: prodtype=FURNITURE
+                - generic [ref=e729]: product=SOFA
+                - generic [ref=e730]: quarter=1.0
+                - generic [ref=e731]: region=EAST
+                - generic [ref=e732]: year=1999.0
+          - row [ref=e733]:
+            - cell "sas / parquet 1 / 1" [ref=e734]:
+              - generic [ref=e735]: sas / parquet
+              - generic [ref=e736]: 1 / 1
+            - cell [ref=e737]
+            - cell "year actual=999.0 country=CANADA division=EDUCATION month=1993-02-01 predict=297.0 prodtype=FURNITURE product=SOFA quarter=1.0 region=EAST year=1993.0" [ref=e738]:
+              - generic [ref=e739]: year
+              - generic [ref=e740]:
+                - generic [ref=e741]: actual=999.0
+                - generic [ref=e742]: country=CANADA
+                - generic [ref=e743]: division=EDUCATION
+                - generic [ref=e744]: month=1993-02-01
+                - generic [ref=e745]: predict=297.0
+                - generic [ref=e746]: prodtype=FURNITURE
+                - generic [ref=e747]: product=SOFA
+                - generic [ref=e748]: quarter=1.0
+                - generic [ref=e749]: region=EAST
+                - generic [ref=e750]: year=1993.0
+            - cell "year actual=999.0 country=CANADA division=EDUCATION month=1993-02-01 predict=297.0 prodtype=FURNITURE product=SOFA quarter=1.0 region=EAST year=1999.0" [ref=e751]:
+              - generic [ref=e752]: year
+              - generic [ref=e753]:
+                - generic [ref=e754]: actual=999.0
+                - generic [ref=e755]: country=CANADA
+                - generic [ref=e756]: division=EDUCATION
+                - generic [ref=e757]: month=1993-02-01
+                - generic [ref=e758]: predict=297.0
+                - generic [ref=e759]: prodtype=FURNITURE
+                - generic [ref=e760]: product=SOFA
+                - generic [ref=e761]: quarter=1.0
+                - generic [ref=e762]: region=EAST
+                - generic [ref=e763]: year=1999.0
+          - row [ref=e764]:
+            - cell "sas / parquet 2 / 2" [ref=e765]:
+              - generic [ref=e766]: sas / parquet
+              - generic [ref=e767]: 2 / 2
+            - cell [ref=e768]
+            - cell "year actual=608.0 country=CANADA division=EDUCATION month=1993-03-01 predict=846.0 prodtype=FURNITURE product=SOFA quarter=1.0 region=EAST year=1993.0" [ref=e769]:
+              - generic [ref=e770]: year
+              - generic [ref=e771]:
+                - generic [ref=e772]: actual=608.0
+                - generic [ref=e773]: country=CANADA
+                - generic [ref=e774]: division=EDUCATION
+                - generic [ref=e775]: month=1993-03-01
+                - generic [ref=e776]: predict=846.0
+                - generic [ref=e777]: prodtype=FURNITURE
+                - generic [ref=e778]: product=SOFA
+                - generic [ref=e779]: quarter=1.0
+                - generic [ref=e780]: region=EAST
+                - generic [ref=e781]: year=1993.0
+            - cell "year actual=608.0 country=CANADA division=EDUCATION month=1993-03-01 predict=846.0 prodtype=FURNITURE product=SOFA quarter=1.0 region=EAST year=1999.0" [ref=e782]:
+              - generic [ref=e783]: year
+              - generic [ref=e784]:
+                - generic [ref=e785]: actual=608.0
+                - generic [ref=e786]: country=CANADA
+                - generic [ref=e787]: division=EDUCATION
+                - generic [ref=e788]: month=1993-03-01
+                - generic [ref=e789]: predict=846.0
+                - generic [ref=e790]: prodtype=FURNITURE
+                - generic [ref=e791]: product=SOFA
+                - generic [ref=e792]: quarter=1.0
+                - generic [ref=e793]: region=EAST
+                - generic [ref=e794]: year=1999.0
+      - group [ref=e795]:
+        - generic "Raw preview values (JSON)" [ref=e796] [cursor=pointer]
+  - generic [ref=e797]:
+    - generic [ref=e798]:
+      - heading "msoc/broken.sas7bdat" [level=2] [ref=e799]
+      - generic [ref=e800]: ERROR
+      - generic [ref=e801]: TypeError
+    - generic [ref=e802]:
+      - generic [ref=e803]:
+        - generic [ref=e804]: SAS rows
+        - generic [ref=e805]: "0"
+      - generic [ref=e806]:
+        - generic [ref=e807]: Parquet rows
+        - generic [ref=e808]: "0"
+      - generic [ref=e809]:
+        - generic [ref=e810]: Matched
+        - generic [ref=e811]: "0"
+      - generic [ref=e812]:
+        - generic [ref=e813]: SAS-only
+        - generic [ref=e814]: "0"
+      - generic [ref=e815]:
+        - generic [ref=e816]: Parquet-only
+        - generic [ref=e817]: "0"
+  - generic [ref=e818]:
+    - generic [ref=e819]:
+      - heading "msoc/orphan.parquet" [level=2] [ref=e820]
+      - generic [ref=e821]: FAIL
+      - generic [ref=e822]: missing_counterpart
+    - generic [ref=e823]:
+      - generic [ref=e824]:
+        - generic [ref=e825]: SAS rows
+        - generic [ref=e826]: "0"
+      - generic [ref=e827]:
+        - generic [ref=e828]: Parquet rows
+        - generic [ref=e829]: "10"
+      - generic [ref=e830]:
+        - generic [ref=e831]: Matched
+        - generic [ref=e832]: "0"
+      - generic [ref=e833]:
+        - generic [ref=e834]: SAS-only
+        - generic [ref=e835]: "0"
+      - generic [ref=e836]:
+        - generic [ref=e837]: Parquet-only
+        - generic [ref=e838]: "10"
+    - paragraph [ref=e839]:
+      - link "Row-level details (JSONL)" [ref=e840] [cursor=pointer]:
+        - /url: details/be7dd5ab44854a399f1a861c4e783e0b.jsonl
+    - group [ref=e841]:
+      - generic "Schema and reader metadata" [ref=e842] [cursor=pointer]
+    - generic [ref=e843]:
+      - heading "Mismatch preview — omitted 0 SAS and 2 Parquet mismatches" [level=3] [ref=e844]
+      - table [ref=e845]:
+        - rowgroup [ref=e846]:
+          - row [ref=e847]:
+            - columnheader "Rows" [ref=e848]
+            - columnheader "Reason" [ref=e849]
+            - columnheader "SAS values" [ref=e850]
+            - columnheader "Parquet values" [ref=e851]
+        - rowgroup [ref=e852]:
+          - row [ref=e853]:
+            - cell "python 0" [ref=e854]:
+              - generic [ref=e855]: python
+              - generic [ref=e856]: "0"
+            - cell "missing_counterpart" [ref=e857]
+            - cell [ref=e858]
+            - cell "actual=925.0 predict=850.0 country=CANADA region=EAST division=EDUCATION prodtype=FURNITURE product=SOFA quarter=1.0 year=1993.0 month=1993-01-01" [ref=e859]:
+              - generic [ref=e860]:
+                - generic [ref=e861]: actual=925.0
+                - generic [ref=e862]: predict=850.0
+                - generic [ref=e863]: country=CANADA
+                - generic [ref=e864]: region=EAST
+                - generic [ref=e865]: division=EDUCATION
+                - generic [ref=e866]: prodtype=FURNITURE
+                - generic [ref=e867]: product=SOFA
+                - generic [ref=e868]: quarter=1.0
+                - generic [ref=e869]: year=1993.0
+                - generic [ref=e870]: month=1993-01-01
+          - row [ref=e871]:
+            - cell "python 1" [ref=e872]:
+              - generic [ref=e873]: python
+              - generic [ref=e874]: "1"
+            - cell "missing_counterpart" [ref=e875]
+            - cell [ref=e876]
+            - cell "actual=999.0 predict=297.0 country=CANADA region=EAST division=EDUCATION prodtype=FURNITURE product=SOFA quarter=1.0 year=1993.0 month=1993-02-01" [ref=e877]:
+              - generic [ref=e878]:
+                - generic [ref=e879]: actual=999.0
+                - generic [ref=e880]: predict=297.0
+                - generic [ref=e881]: country=CANADA
+                - generic [ref=e882]: region=EAST
+                - generic [ref=e883]: division=EDUCATION
+                - generic [ref=e884]: prodtype=FURNITURE
+                - generic [ref=e885]: product=SOFA
+                - generic [ref=e886]: quarter=1.0
+                - generic [ref=e887]: year=1993.0
+                - generic [ref=e888]: month=1993-02-01
+          - row [ref=e889]:
+            - cell "python 2" [ref=e890]:
+              - generic [ref=e891]: python
+              - generic [ref=e892]: "2"
+            - cell "missing_counterpart" [ref=e893]
+            - cell [ref=e894]
+            - cell "actual=608.0 predict=846.0 country=CANADA region=EAST division=EDUCATION prodtype=FURNITURE product=SOFA quarter=1.0 year=1993.0 month=1993-03-01" [ref=e895]:
+              - generic [ref=e896]:
+                - generic [ref=e897]: actual=608.0
+                - generic [ref=e898]: predict=846.0
+                - generic [ref=e899]: country=CANADA
+                - generic [ref=e900]: region=EAST
+                - generic [ref=e901]: division=EDUCATION
+                - generic [ref=e902]: prodtype=FURNITURE
+                - generic [ref=e903]: product=SOFA
+                - generic [ref=e904]: quarter=1.0
+                - generic [ref=e905]: year=1993.0
+                - generic [ref=e906]: month=1993-03-01
+          - row [ref=e907]:
+            - cell "python 3" [ref=e908]:
+              - generic [ref=e909]: python
+              - generic [ref=e910]: "3"
+            - cell "missing_counterpart" [ref=e911]
+            - cell [ref=e912]
+            - cell "actual=642.0 predict=533.0 country=CANADA region=EAST division=EDUCATION prodtype=FURNITURE product=SOFA quarter=2.0 year=1993.0 month=1993-04-01" [ref=e913]:
+              - generic [ref=e914]:
+                - generic [ref=e915]: actual=642.0
+                - generic [ref=e916]: predict=533.0
+                - generic [ref=e917]: country=CANADA
+                - generic [ref=e918]: region=EAST
+                - generic [ref=e919]: division=EDUCATION
+                - generic [ref=e920]: prodtype=FURNITURE
+                - generic [ref=e921]: product=SOFA
+                - generic [ref=e922]: quarter=2.0
+                - generic [ref=e923]: year=1993.0
+                - generic [ref=e924]: month=1993-04-01
+          - row [ref=e925]:
+            - cell "python 4" [ref=e926]:
+              - generic [ref=e927]: python
+              - generic [ref=e928]: "4"
+            - cell "missing_counterpart" [ref=e929]
+            - cell [ref=e930]
+            - cell "actual=656.0 predict=646.0 country=CANADA region=EAST division=EDUCATION prodtype=FURNITURE product=SOFA quarter=2.0 year=1993.0 month=1993-05-01" [ref=e931]:
+              - generic [ref=e932]:
+                - generic [ref=e933]: actual=656.0
+                - generic [ref=e934]: predict=646.0
+                - generic [ref=e935]: country=CANADA
+                - generic [ref=e936]: region=EAST
+                - generic [ref=e937]: division=EDUCATION
+                - generic [ref=e938]: prodtype=FURNITURE
+                - generic [ref=e939]: product=SOFA
+                - generic [ref=e940]: quarter=2.0
+                - generic [ref=e941]: year=1993.0
+                - generic [ref=e942]: month=1993-05-01
+          - row [ref=e943]:
+            - cell "python 5" [ref=e944]:
+              - generic [ref=e945]: python
+              - generic [ref=e946]: "5"
+            - cell "missing_counterpart" [ref=e947]
+            - cell [ref=e948]
+            - cell "actual=948.0 predict=486.0 country=CANADA region=EAST division=EDUCATION prodtype=FURNITURE product=SOFA quarter=2.0 year=1993.0 month=1993-06-01" [ref=e949]:
+              - generic [ref=e950]:
+                - generic [ref=e951]: actual=948.0
+                - generic [ref=e952]: predict=486.0
+                - generic [ref=e953]: country=CANADA
+                - generic [ref=e954]: region=EAST
+                - generic [ref=e955]: division=EDUCATION
+                - generic [ref=e956]: prodtype=FURNITURE
+                - generic [ref=e957]: product=SOFA
+                - generic [ref=e958]: quarter=2.0
+                - generic [ref=e959]: year=1993.0
+                - generic [ref=e960]: month=1993-06-01
+          - row [ref=e961]:
+            - cell "python 6" [ref=e962]:
+              - generic [ref=e963]: python
+              - generic [ref=e964]: "6"
+            - cell "missing_counterpart" [ref=e965]
+            - cell [ref=e966]
+            - cell "actual=612.0 predict=717.0 country=CANADA region=EAST division=EDUCATION prodtype=FURNITURE product=SOFA quarter=3.0 year=1993.0 month=1993-07-01" [ref=e967]:
+              - generic [ref=e968]:
+                - generic [ref=e969]: actual=612.0
+                - generic [ref=e970]: predict=717.0
+                - generic [ref=e971]: country=CANADA
+                - generic [ref=e972]: region=EAST
+                - generic [ref=e973]: division=EDUCATION
+                - generic [ref=e974]: prodtype=FURNITURE
+                - generic [ref=e975]: product=SOFA
+                - generic [ref=e976]: quarter=3.0
+                - generic [ref=e977]: year=1993.0
+                - generic [ref=e978]: month=1993-07-01
+          - row [ref=e979]:
+            - cell "python 7" [ref=e980]:
+              - generic [ref=e981]: python
+              - generic [ref=e982]: "7"
+            - cell "missing_counterpart" [ref=e983]
+            - cell [ref=e984]
+            - cell "actual=114.0 predict=564.0 country=CANADA region=EAST division=EDUCATION prodtype=FURNITURE product=SOFA quarter=3.0 year=1993.0 month=1993-08-01" [ref=e985]:
+              - generic [ref=e986]:
+                - generic [ref=e987]: actual=114.0
+                - generic [ref=e988]: predict=564.0
+                - generic [ref=e989]: country=CANADA
+                - generic [ref=e990]: region=EAST
+                - generic [ref=e991]: division=EDUCATION
+                - generic [ref=e992]: prodtype=FURNITURE
+                - generic [ref=e993]: product=SOFA
+                - generic [ref=e994]: quarter=3.0
+                - generic [ref=e995]: year=1993.0
+                - generic [ref=e996]: month=1993-08-01
+      - group [ref=e997]:
+        - generic "Raw preview values (JSON)" [ref=e998] [cursor=pointer]
+  - contentinfo [ref=e999]:
+    - paragraph [ref=e1000]: Reports can contain sensitive data; store and delete them according to local data-handling rules. Previews are bounded; JSONL details contain the complete row-level result.
+    - paragraph [ref=e1001]: sentinel-parity 0.3.0 · polars-readstat 0.21.1 · polars 1.44.2 · pyarrow 24.0.0 · duckdb 1.5.5 · jinja2 3.1.6

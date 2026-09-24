@@ -200,6 +200,8 @@ details pre {
 .cell-chip.is-diff { background: var(--fail-bg); color: var(--fail); border-radius: 0.25rem; padding: 0 0.3rem; }
 .cell-chip.is-diff .name, .cell-chip.is-diff .name::after { color: var(--fail); }
 .diff-note { font: 600 0.6875rem/1.4 var(--mono); color: var(--fail); margin: 0 0 0.25rem; }
+.row-num { font: 0.6875rem/1.4 var(--mono); color: var(--ink-faint); margin: 0.25rem 0 0; }
+td .val[style], .cell-chip.is-diff .val { font-weight: 600; }
 .raw-json summary { font-size: 0.75rem; }
 
 /* Footer */
@@ -272,25 +274,40 @@ footer .build { font: 0.75rem/1.6 var(--mono); color: var(--ink-faint); }
   <div class="preview">
     <h3>Mismatch preview — omitted {{ truncation.get("sas", 0) }} SAS and {{ truncation.get("python", 0) }} Parquet mismatches</h3>
     {% if previews.get(dataset.id) %}
+    {% macro value_chips(record) %}
+    {% set diffs = record.differing_columns or [] %}
+    {% if diffs %}<div class="diff-note">{{ diffs|join(", ") }}</div>{% endif %}
+    <span class="cell-chips">
+      {% for name, env in record["values"].items() %}
+      {% set absent = env is not none and "value" not in env and env["type"] == "absent_column" %}
+      <span class="cell-chip {{ "is-diff" if name in diffs or absent else "" }}"><span class="name">{{ name }}</span>{% if env is none %}<span class="val">null</span>{% elif absent %}<span class="val">absent</span>{% elif "value" in env %}<span class="val">{{ env["value"] }}</span>{% else %}<span class="val">{{ env["type"] }}</span>{% endif %}</span>
+      {% endfor %}
+    </span>
+    {% endmacro %}
     <table>
       <thead>
-        <tr><th scope="col">Side</th><th scope="col">Row</th><th scope="col">Reason</th><th scope="col">Values</th></tr>
+        <tr><th scope="col">Rows</th><th scope="col">Reason</th><th scope="col">SAS values</th><th scope="col">Parquet values</th></tr>
       </thead>
       <tbody>
-        {% for row in previews[dataset.id] %}
+        {% for pair_id, group in previews[dataset.id]|selectattr("pair_id")|groupby("pair_id") %}
+        {% set sas_group = group|selectattr("side", "equalto", "sas")|list %}
+        {% set python_group = group|selectattr("side", "equalto", "python")|list %}
         <tr>
-          <td class="side"><span class="side-badge">{{ row.side }}</span></td>
-          <td class="row">{{ row.staging_row_number }}</td>
-          <td class="reason-cell"><span class="reason-chip">{{ row.reason }}</span></td>
-          <td>
-            {% set diffs = row.differing_columns or [] %}
-            {% if diffs %}<div class="diff-note">{{ diffs|join(", ") }}</div>{% endif %}
-            <span class="cell-chips">
-              {% for name, env in row["values"].items() %}
-              <span class="cell-chip {{ "is-diff" if name in diffs else "" }}"><span class="name">{{ name }}</span>{% if env is none %}<span class="val">null</span>{% elif "value" in env %}<span class="val">{{ env["value"] }}</span>{% else %}<span class="val">{{ env["type"] }}</span>{% endif %}</span>
-              {% endfor %}
-            </span>
-          </td>
+          <td class="side"><span class="side-badge">sas / parquet</span><div class="row-num">{{ (sas_group[0].staging_row_number if sas_group else "—") }} / {{ (python_group[0].staging_row_number if python_group else "—") }}</div></td>
+          <td class="reason-cell"></td>
+          <td>{% if sas_group %}{{ value_chips(sas_group[0]) }}{% endif %}</td>
+          <td>{% if python_group %}{{ value_chips(python_group[0]) }}{% endif %}</td>
+        </tr>
+        {% endfor %}
+        {% for row in previews[dataset.id]|rejectattr("pair_id")|list %}
+        <tr>
+          <td class="side"><span class="side-badge">{{ row.side }}</span><div class="row-num">{{ row.staging_row_number }}</div></td>
+          <td class="reason-cell">{% if row.reason %}<span class="reason-chip">{{ row.reason }}</span>{% endif %}</td>
+          {% if row.side == "sas" %}
+          <td>{{ value_chips(row) }}</td><td></td>
+          {% else %}
+          <td></td><td>{{ value_chips(row) }}</td>
+          {% endif %}
         </tr>
         {% endfor %}
       </tbody>

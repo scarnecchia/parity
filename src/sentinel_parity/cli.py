@@ -37,6 +37,14 @@ def run_command(
     temp_dir: Annotated[Path | None, typer.Option("--temp-dir")] = None,
     max_temp_size: Annotated[str | None, typer.Option("--max-temp-size")] = None,
     preview_rows: Annotated[int | None, typer.Option("--preview-rows")] = None,
+    round: Annotated[
+        int | None,
+        typer.Option(
+            "--round",
+            "--round-digits",
+            help="Floor all numeric values to N significant digits before comparison.",
+        ),
+    ] = None,
 ) -> None:
     """Compare discovered datasets and write a local report."""
     try:
@@ -50,6 +58,7 @@ def run_command(
                 "temp_dir": temp_dir,
                 "max_temp_size": max_temp_size,
                 "preview_rows": preview_rows,
+                "round_digits": round,
             },
         )
         raise typer.Exit(run(config_value))

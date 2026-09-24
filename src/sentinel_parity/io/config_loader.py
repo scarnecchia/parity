@@ -17,6 +17,7 @@ _ALLOWED = {
     "temp_dir",
     "max_temp_size",
     "preview_rows",
+    "round_digits",
 }
 
 
@@ -57,4 +58,8 @@ def load_config(config_path: Path | None, overrides: dict[str, Any]) -> RunConfi
         isinstance(values["preview_rows"], bool) or not isinstance(values["preview_rows"], int)
     ):
         raise ValueError("preview_rows must be an integer")
+    if "round_digits" in values and (
+        isinstance(values["round_digits"], bool) or not isinstance(values["round_digits"], int)
+    ):
+        raise ValueError("round_digits must be an integer")
     return RunConfig(**values)

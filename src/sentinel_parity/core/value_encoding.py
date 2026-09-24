@@ -13,7 +13,7 @@ from __future__ import annotations
 import base64
 import math
 from datetime import UTC, date, datetime, timedelta
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_DOWN, Decimal, InvalidOperation
 from fractions import Fraction
 from typing import Any
 
@@ -42,6 +42,33 @@ _EPOCH_NAIVE = datetime(1970, 1, 1)
 _EPOCH_AWARE = datetime(1970, 1, 1, tzinfo=UTC)
 
 
+def floor_to_significant(value: Decimal, digits: int) -> Decimal:
+    """Truncate toward zero to `digits` significant decimal digits."""
+    if not value.is_finite() or value == 0:
+        return value
+    quantum = Decimal(1).scaleb(value.adjusted() - digits + 1)
+    scaled = (value / quantum).to_integral_value(rounding=ROUND_DOWN)
+    return scaled * quantum
+
+
+def _as_decimal(value: int | float | Decimal) -> Decimal:
+    return value if isinstance(value, Decimal) else Decimal(value)
+
+
+def rounded_display(
+    value: int | float | Decimal, round_digits: int | None
+) -> int | float | Decimal:
+    if round_digits is None:
+        return value
+    decimal_value = _as_decimal(value)
+    if not decimal_value.is_finite():
+        return value
+    normalized = floor_to_significant(decimal_value, round_digits).normalize()
+    if normalized == normalized.to_integral_value():
+        return normalized.quantize(Decimal(1))
+    return normalized
+
+
 def _instant_ns(value: datetime) -> int:
     delta = value - _EPOCH_NAIVE if value.tzinfo is None else value.astimezone(UTC) - _EPOCH_AWARE
     return (delta // timedelta(microseconds=1)) * 1000
@@ -62,7 +89,7 @@ def temporal_ns_iso(epoch_ns: int, timezone_aware: bool) -> str:
     return f"{base}.{suffix}{zone}"
 
 
-def _text_key(value: str) -> str:
+def _text_key(value: str, round_digits: int | None = None) -> str:
     text = value.rstrip()
     if not text:
         return "null"
@@ -72,10 +99,12 @@ def _text_key(value: str) -> str:
         return "s:" + text
     if number.is_nan():
         return "null"
+    if round_digits is not None:
+        number = floor_to_significant(number, round_digits)
     return numeric_key(number)
 
 
-def canonical_key(value: Any) -> str:
+def canonical_key(value: Any, round_digits: int | None = None) -> str:
     if value is None:
         return "null"
     if isinstance(value, bool):
@@ -85,6 +114,8 @@ def canonical_key(value: Any) -> str:
             return "null"
         if isinstance(value, Decimal) and value.is_nan():
             return "null"
+        if round_digits is not None:
+            value = floor_to_significant(_as_decimal(value), round_digits)
         return numeric_key(value)
     if isinstance(value, datetime):
         return temporal_ns_key(_instant_ns(value))
@@ -92,13 +123,15 @@ def canonical_key(value: Any) -> str:
         days = value.toordinal() - _EPOCH_NAIVE.date().toordinal()
         return temporal_ns_key(days * 86_400_000_000_000)
     if isinstance(value, str):
-        return _text_key(value)
+        return _text_key(value, round_digits)
     if isinstance(value, (bytes, bytearray, memoryview)):
         return "y:" + base64.b64encode(bytes(value)).decode("ascii")
     raise TypeError(f"unsupported logical value type: {type(value).__name__}")
 
 
-def typed_value(value: Any, logical_type: str | None = None) -> dict[str, object] | None:
+def typed_value(
+    value: Any, logical_type: str | None = None, round_digits: int | None = None
+) -> dict[str, object] | None:
     if value is None:
         return None
     if isinstance(value, bool):
@@ -106,8 +139,8 @@ def typed_value(value: Any, logical_type: str | None = None) -> dict[str, object
     if isinstance(value, (int, float, Decimal)):
         return {
             "type": logical_type or type(value).__name__,
-            "value": str(value),
-            "canonical": canonical_key(value),
+            "value": str(rounded_display(value, round_digits)),
+            "canonical": canonical_key(value, round_digits=round_digits),
         }
     if isinstance(value, datetime):
         return {

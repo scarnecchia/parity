@@ -1375,6 +1375,90 @@ def test_sas_trailing_blank_padding_matches(tmp_path: Path) -> None:
     assert dataset["status"] == "PASS"
 
 
+def test_round_digits_option_changes_comparison(tmp_path: Path) -> None:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from sentinel_parity.io.duckdb_comparison import compare
+    from sentinel_parity.io.staging import stage
+
+    left_path, right_path = tmp_path / "left.parquet", tmp_path / "right.parquet"
+    pq.write_table(pa.table({"n": pa.array([16.24681, 5.0], type=pa.float64())}), left_path)
+    pq.write_table(pa.table({"n": pa.array([16.2468, 5.0], type=pa.float64())}), right_path)
+    work = tmp_path / "work"
+    work.mkdir()
+    raw = compare(
+        stage(left_path, "python", work),
+        stage(right_path, "python", work),
+        work,
+        "128MB",
+        "2GB",
+        "round-raw",
+    )
+    assert (raw["status"], raw["matched"]) == ("FAIL", 1)
+    rounded = compare(
+        stage(left_path, "python", work, round_digits=4),
+        stage(right_path, "python", work, round_digits=4),
+        work,
+        "128MB",
+        "2GB",
+        "round-4",
+    )
+    # 16.24681 and 16.2468 agree at 4 significant digits.
+    assert (rounded["status"], rounded["matched"]) == ("PASS", 2)
+
+
+def test_datasets_are_reported_in_name_order(tmp_path: Path) -> None:
+    sas, python = _roots(tmp_path)
+    fixture = Path(__file__).resolve().parents[1] / ".parity-fixtures" / "productsales.sas7bdat"
+    shutil.copyfile(fixture, sas / "dplocal" / "matched.sas7bdat")
+    polars_readstat.ScanReadstat(
+        str(sas / "dplocal" / "matched.sas7bdat")
+    ).df.collect().write_parquet(python / "dplocal" / "matched.parquet")
+    shutil.copyfile(fixture, sas / "msoc" / "lonely.sas7bdat")
+    assert run(RunConfig(sas, python, tmp_path / "out")) == 1
+    names = [
+        item["name"]
+        for item in json.loads((tmp_path / "out" / "summary.json").read_text())["datasets"]
+    ]
+    assert names == sorted(names, key=str.casefold)
+    assert names[0].startswith("dplocal/")
+
+
+def test_round_digits_config_and_cli(tmp_path: Path) -> None:
+    config = tmp_path / "run.toml"
+    config.write_text('sas_root="sas"\npython_root="python"\nround_digits=4\noutput_dir="out"\n')
+    assert load_config(config, {}).round_digits == 4
+    bad = tmp_path / "bad.toml"
+    bad.write_text('sas_root="sas"\npython_root="python"\nround_digits=0\noutput_dir="out"\n')
+    with pytest.raises(ValueError):
+        load_config(bad, {})
+
+    sas, python = _roots(tmp_path / "run")
+    fixture = Path(__file__).resolve().parents[1] / ".parity-fixtures" / "productsales.sas7bdat"
+    shutil.copyfile(fixture, sas / "dplocal" / "data.sas7bdat")
+    polars_readstat.ScanReadstat(str(sas / "dplocal" / "data.sas7bdat")).df.collect().write_parquet(
+        python / "dplocal" / "data.parquet"
+    )
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--sas-root",
+            str(sas),
+            "--python-root",
+            str(python),
+            "--output-dir",
+            str(tmp_path / "cli-out"),
+            "--round",
+            "2",
+        ],
+    )
+    assert result.exit_code == 0
+    summary = json.loads((tmp_path / "cli-out" / "summary.json").read_text())
+    assert summary["limits"]["round_digits"] == 2
+
+
 def test_missing_and_text_forms_match_across_types(tmp_path: Path) -> None:
     import pyarrow as pa
     import pyarrow.parquet as pq
@@ -1457,3 +1541,5 @@ def test_unmatched_rows_carry_differing_columns(tmp_path: Path) -> None:
     assert len(failures) == 2
     assert all(record["differing_columns"] == ["b"] for record in failures)
     assert {record["side"] for record in failures} == {"sas", "python"}
+    pair_ids = {record["pair_id"] for record in failures}
+    assert len(pair_ids) == 1 and None not in pair_ids

@@ -52,6 +52,7 @@ Open `parity-report/index.html` directly in a browser. The HTML report has no ne
 | `--temp-dir` | `temp_dir` | String path to an existing base directory for the run's private temporary directory | Unset; Python's system temporary-directory selection, including `TMPDIR` |
 | `--max-temp-size` | `max_temp_size` | Nonempty DuckDB maximum temporary-directory-size string, such as `"10GB"` | `"10GB"` |
 | `--preview-rows` | `preview_rows` | Nonnegative integer: maximum mismatch preview rows per side per dataset in HTML; `0` hides preview rows | `100` |
+| `--round` | `round_digits` | Positive integer: floor all numeric values — including coerced numeric text — to N significant digits toward zero before comparison | Omitted; raw values compare |
 | `--help` | None | Flag: show help and exit (`parity --help` or `parity run --help`) | Not set |
 
 CLI values override TOML values **per key**. Required roots may come from either source. TOML keys are top-level; unknown keys are rejected.
