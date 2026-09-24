@@ -1404,7 +1404,7 @@ def test_round_digits_option_changes_comparison(tmp_path: Path) -> None:
         "2GB",
         "round-4",
     )
-    # 16.24681 and 16.2468 agree at 4 significant digits.
+    # 16.24681 and 16.2468 agree at 4 decimal places.
     assert (rounded["status"], rounded["matched"]) == ("PASS", 2)
 
 
@@ -1457,6 +1457,54 @@ def test_round_digits_config_and_cli(tmp_path: Path) -> None:
     assert result.exit_code == 0
     summary = json.loads((tmp_path / "cli-out" / "summary.json").read_text())
     assert summary["limits"]["round_digits"] == 2
+
+
+def test_row_order_mismatch_is_flagged(tmp_path: Path) -> None:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from sentinel_parity.io.duckdb_comparison import compare
+    from sentinel_parity.io.staging import stage
+
+    left_path, right_path = tmp_path / "left.parquet", tmp_path / "right.parquet"
+    pq.write_table(pa.table({"a": [1, 2, 3], "b": [10, 20, 30]}), left_path)
+    pq.write_table(pa.table({"a": [3, 1, 2], "b": [30, 10, 20]}), right_path)
+    work = tmp_path / "work"
+    work.mkdir()
+    reordered = compare(
+        stage(left_path, "python", work),
+        stage(right_path, "python", work),
+        work,
+        "128MB",
+        "2GB",
+        "order-differs",
+    )
+    # Same multiset, different file order: PASS, but the flag fires.
+    assert (reordered["status"], reordered["matched"]) == ("PASS", 3)
+    assert reordered["order_mismatches"] == 3
+    ordered = compare(
+        stage(left_path, "python", work),
+        stage(left_path, "python", work),
+        work,
+        "128MB",
+        "2GB",
+        "order-same",
+    )
+    assert ordered["order_mismatches"] == 0
+
+
+def test_row_order_flag_in_report(tmp_path: Path) -> None:
+    sas, python = _roots(tmp_path)
+    fixture = Path(__file__).resolve().parents[1] / ".parity-fixtures" / "productsales.sas7bdat"
+    shutil.copyfile(fixture, sas / "dplocal" / "reversed.sas7bdat")
+    frame = polars_readstat.ScanReadstat(str(sas / "dplocal" / "reversed.sas7bdat")).df.collect()
+    frame.reverse().write_parquet(python / "dplocal" / "reversed.parquet")
+    assert run(RunConfig(sas, python, tmp_path / "out")) == 0
+    dataset = json.loads((tmp_path / "out" / "summary.json").read_text())["datasets"][0]
+    assert dataset["status"] == "PASS"
+    assert dataset["row_order_mismatches"] == 1440
+    html = (tmp_path / "out" / "index.html").read_text()
+    assert "Row order differs from the Parquet file" in html
 
 
 def test_missing_and_text_forms_match_across_types(tmp_path: Path) -> None:

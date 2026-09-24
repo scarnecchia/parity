@@ -62,6 +62,7 @@ def compare(
                 "matched": 0,
                 "sas_only": left["rows"],
                 "python_only": right["rows"],
+                "order_mismatches": 0,
                 "details_path": detail_path,
             }
         keycols = [f"k_{name}" for name in left_columns]
@@ -125,6 +126,11 @@ def compare(
                 payload.append((s_ord, p_ord, rank, json.dumps(diffs)))
         if payload:
             connection.executemany("INSERT INTO annotations VALUES (?, ?, ?, ?)", payload)
+        order_row = connection.execute(
+            "SELECT count(*) FROM sas_ranked l JOIN python_ranked r ON "
+            f"{equality} WHERE l.ordinal != r.ordinal"
+        ).fetchone()
+        order_mismatches = int(order_row[0]) if order_row else 0
         selected = ", ".join(
             f"l.{quote_identifier('v_' + n)} AS l_{i}, r.{quote_identifier('v_' + n)} AS r_{i}"
             for i, n in enumerate(left_columns)
@@ -180,6 +186,7 @@ def compare(
             "matched": matched,
             "sas_only": sas_only,
             "python_only": python_only,
+            "order_mismatches": order_mismatches,
             "details_path": detail_path,
         }
     finally:

@@ -115,6 +115,15 @@ section h2 {
   padding: 0.625rem 0;
   border-top: 1px solid var(--line);
 }
+.order-flag {
+  margin: 0.75rem 0 0;
+  padding: 0.3125rem 0.625rem;
+  border: 1px solid var(--error);
+  border-radius: 0.25rem;
+  background: var(--error-bg);
+  color: var(--error);
+  font: 500 0.8125rem/1.5 var(--mono);
+}
 .stat { display: flex; flex-direction: column; gap: 0.0625rem; min-width: 3.5rem; }
 .stat .label {
   font: 500 0.6875rem/1.4 system-ui, sans-serif;
@@ -245,6 +254,9 @@ footer .build { font: 0.75rem/1.6 var(--mono); color: var(--ink-faint); }
     <span class="pill {{ dataset.status }}">{{ dataset.status }}</span>
     {% if dataset.reason %}<span class="reason-chip">{{ dataset.reason }}</span>{% endif %}
   </header>
+  {% if dataset.row_order_mismatches %}
+  <p class="order-flag">Row order differs from the Parquet file — {{ dataset.row_order_mismatches }} matched rows are misplaced</p>
+  {% endif %}
   {% set stats = [
     ("SAS rows", dataset.sas_rows, false),
     ("Parquet rows", dataset.python_rows, false),

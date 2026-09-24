@@ -175,6 +175,7 @@ def run(config: RunConfig) -> int:
                         "matched_pairs": result["matched"],
                         "sas_only": result["sas_only"],
                         "python_only": result["python_only"],
+                        "row_order_mismatches": result["order_mismatches"],
                         "detail_complete": True,
                         "metadata": metadata,
                     }
