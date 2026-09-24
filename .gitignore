@@ -10,3 +10,4 @@ dist/
 parity-report/
 __pycache__/
 .hypothesis/
+.playwright-mcp/
