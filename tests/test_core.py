@@ -35,13 +35,22 @@ def test_integer_values_match_across_widths(value: int) -> None:
     assert canonical_key(value + 1) != canonical_key(value)
 
 
-def test_null_nan_text_policy() -> None:
+def test_missing_forms_are_one_value() -> None:
     assert canonical_key(None) == "null"
-    assert canonical_key(float("nan")) == "f:nan"
-    assert canonical_key("") != canonical_key(None)
-    assert canonical_key("  x ") != canonical_key("x")
-    assert canonical_key(True) == canonical_key(1) == "n:1/1"
-    assert canonical_key(False) == canonical_key(0)
+    assert canonical_key(float("nan")) == "null"
+    assert canonical_key(Decimal("NaN")) == "null"
+    assert canonical_key("") == canonical_key("   ") == canonical_key(None)
+    assert canonical_key("x ") == canonical_key("x")
+    assert canonical_key(" x") != canonical_key("x")
+
+
+def test_text_and_numbers_share_one_value_space() -> None:
+    assert canonical_key(True) == canonical_key(1) == canonical_key("1") == "n:1/1"
+    assert canonical_key(False) == canonical_key(0) == canonical_key("0")
+    assert canonical_key("8.0") == canonical_key(8) == canonical_key(8.0)
+    assert canonical_key("16.2") != canonical_key(16)
+    assert canonical_key("abc") == "s:abc"
+    assert canonical_key("abc") != canonical_key(0)
 
 
 def test_temporal_values_match_across_declared_types() -> None:

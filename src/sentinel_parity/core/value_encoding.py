@@ -3,7 +3,9 @@
 
 Cells match when their decoded values are equal; declared storage types are
 never a factor. 16.0 = 16 while 16.2 != 16, True = 1, naive timestamps are
-instants read as UTC, and dates equal midnight instants.
+instants read as UTC, dates equal midnight instants, numeric-looking text
+compares as numbers, and every missing form (null, NaN, blank text) is one
+value.
 """
 
 from __future__ import annotations
@@ -11,7 +13,7 @@ from __future__ import annotations
 import base64
 import math
 from datetime import UTC, date, datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from fractions import Fraction
 from typing import Any
 
@@ -60,10 +62,29 @@ def temporal_ns_iso(epoch_ns: int, timezone_aware: bool) -> str:
     return f"{base}.{suffix}{zone}"
 
 
+def _text_key(value: str) -> str:
+    text = value.rstrip()
+    if not text:
+        return "null"
+    try:
+        number = Decimal(text)
+    except InvalidOperation:
+        return "s:" + text
+    if number.is_nan():
+        return "null"
+    return numeric_key(number)
+
+
 def canonical_key(value: Any) -> str:
     if value is None:
         return "null"
-    if isinstance(value, (bool, int, float, Decimal)):
+    if isinstance(value, bool):
+        return numeric_key(int(value))
+    if isinstance(value, (int, float, Decimal)):
+        if isinstance(value, float) and math.isnan(value):
+            return "null"
+        if isinstance(value, Decimal) and value.is_nan():
+            return "null"
         return numeric_key(value)
     if isinstance(value, datetime):
         return temporal_ns_key(_instant_ns(value))
@@ -71,7 +92,7 @@ def canonical_key(value: Any) -> str:
         days = value.toordinal() - _EPOCH_NAIVE.date().toordinal()
         return temporal_ns_key(days * 86_400_000_000_000)
     if isinstance(value, str):
-        return "s:" + value
+        return _text_key(value)
     if isinstance(value, (bytes, bytearray, memoryview)):
         return "y:" + base64.b64encode(bytes(value)).decode("ascii")
     raise TypeError(f"unsupported logical value type: {type(value).__name__}")
@@ -86,7 +107,7 @@ def typed_value(value: Any, logical_type: str | None = None) -> dict[str, object
         return {
             "type": logical_type or type(value).__name__,
             "value": str(value),
-            "canonical": numeric_key(value),
+            "canonical": canonical_key(value),
         }
     if isinstance(value, datetime):
         return {

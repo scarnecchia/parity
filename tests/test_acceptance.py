@@ -898,7 +898,7 @@ def test_one_sided_detail_values_use_typed_envelopes(tmp_path: Path) -> None:
     ]
     value = records[0]["values"]
     assert records[0]["dataset_id"] == dataset["id"]
-    assert value["amount"] == {"type": "float", "value": "nan", "canonical": "f:nan"}
+    assert value["amount"] == {"type": "float", "value": "nan", "canonical": "null"}
     assert value["when"] == {"type": "date", "value": "2025-01-02"}
     assert value["blob"] == {"type": "binary", "value": "AP8="}
     by_ordinal = {
@@ -1361,3 +1361,99 @@ def test_boolean_matches_numeric_values_across_types(tmp_path: Path) -> None:
     )
     assert (mismatching["status"], mismatching["matched"]) == ("FAIL", 3)
     assert (mismatching["sas_only"], mismatching["python_only"]) == (1, 1)
+
+
+def test_sas_trailing_blank_padding_matches(tmp_path: Path) -> None:
+    sas, python = _roots(tmp_path)
+    fixture = Path(__file__).resolve().parents[1] / ".parity-fixtures" / "productsales.sas7bdat"
+    shutil.copyfile(fixture, sas / "dplocal" / "padded.sas7bdat")
+    frame = polars_readstat.ScanReadstat(str(sas / "dplocal" / "padded.sas7bdat")).df.collect()
+    padded = frame.with_columns(pl.concat_str(pl.col("COUNTRY"), pl.lit("  ")).alias("COUNTRY"))
+    padded.write_parquet(python / "dplocal" / "padded.parquet")
+    assert run(RunConfig(sas, python, tmp_path / "out")) == 0
+    dataset = json.loads((tmp_path / "out" / "summary.json").read_text())["datasets"][0]
+    assert dataset["status"] == "PASS"
+
+
+def test_missing_and_text_forms_match_across_types(tmp_path: Path) -> None:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from sentinel_parity.io.duckdb_comparison import compare
+    from sentinel_parity.io.staging import stage
+
+    left_path, right_path = tmp_path / "left.parquet", tmp_path / "right.parquet"
+    pq.write_table(
+        pa.table(
+            {
+                "t": pa.array(["CANADA ", "zz"]),
+                "n": pa.array([8.0, 1.5], type=pa.float64()),
+                "m": pa.array([float("nan"), None], type=pa.float64()),
+            }
+        ),
+        left_path,
+    )
+    pq.write_table(
+        pa.table(
+            {
+                "t": pa.array(["CANADA", "zz "]),
+                "n": pa.array(["8", "1.5"], type=pa.large_string()),
+                "m": pa.array([None, None], type=pa.float64()),
+            }
+        ),
+        right_path,
+    )
+    work = tmp_path / "work"
+    work.mkdir()
+    result = compare(
+        stage(left_path, "python", work),
+        stage(right_path, "python", work),
+        work,
+        "128MB",
+        "2GB",
+        "text-missing-forms-test",
+    )
+    # SAS trailing blank padding, blank-vs-null, NaN-vs-null, and numeric
+    # text all compare as equal values.
+    assert (result["status"], result["matched"], result["sas_only"], result["python_only"]) == (
+        "PASS",
+        2,
+        0,
+        0,
+    )
+
+
+def test_unmatched_rows_carry_differing_columns(tmp_path: Path) -> None:
+    import json
+
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from sentinel_parity.io.duckdb_comparison import compare
+    from sentinel_parity.io.staging import stage
+
+    left_path, right_path = tmp_path / "left.parquet", tmp_path / "right.parquet"
+    pq.write_table(
+        pa.table({"a": [1, 2], "b": [10, 20], "c": [5, 6]}),
+        left_path,
+    )
+    pq.write_table(
+        pa.table({"a": [1, 2], "b": [10, 99], "c": [5, 6]}),
+        right_path,
+    )
+    work = tmp_path / "work"
+    work.mkdir()
+    result = compare(
+        stage(left_path, "python", work),
+        stage(right_path, "python", work),
+        work,
+        "128MB",
+        "2GB",
+        "diff-attribution-test",
+    )
+    assert result["status"] == "FAIL"
+    records = [json.loads(line) for line in Path(result["details_path"]).read_text().splitlines()]
+    failures = [record for record in records if record["status"] == "FAIL"]
+    assert len(failures) == 2
+    assert all(record["differing_columns"] == ["b"] for record in failures)
+    assert {record["side"] for record in failures} == {"sas", "python"}

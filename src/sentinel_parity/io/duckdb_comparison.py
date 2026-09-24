@@ -86,13 +86,54 @@ def compare(
         matched, sas_only, python_only = (int(value or 0) for value in (stats or (0, 0, 0)))
         if (left_except, right_except) != (sas_only, python_only):
             raise RuntimeError("independent multiset counts disagree")
+        for side in ("sas", "python"):
+            connection.execute(
+                f"CREATE TABLE {side}_counts AS SELECT {keys}, count(*) AS n "
+                f"FROM {side}_ranked GROUP BY ALL"
+            )
+        for side, other in (("sas", "python"), ("python", "sas")):
+            on = " AND ".join(f"s.{quote_identifier(k)} = c.{quote_identifier(k)}" for k in keycols)
+            connection.execute(
+                f"CREATE TABLE {side}_excess AS SELECT s.* FROM {side}_ranked s "
+                f"LEFT JOIN {other}_counts c ON {on} WHERE s.occurrence > coalesce(c.n, 0)"
+            )
+            connection.execute(
+                f"CREATE TABLE {side}_pair AS SELECT *, row_number() OVER (ORDER BY ordinal) "
+                f"AS pair_rank FROM {side}_excess"
+            )
+        connection.execute(
+            "CREATE TABLE annotations(s_ordinal BIGINT, p_ordinal BIGINT, diffs VARCHAR)"
+        )
+        left_keys = ", ".join(f"l.{quote_identifier(k)} AS lk{i}" for i, k in enumerate(keycols))
+        right_keys = ", ".join(f"r.{quote_identifier(k)} AS rk{i}" for i, k in enumerate(keycols))
+        pair_rows = connection.execute(
+            f"SELECT l.ordinal, r.ordinal, {left_keys}, {right_keys} FROM sas_pair l "
+            f"FULL JOIN python_pair r ON l.pair_rank = r.pair_rank"
+        ).fetchall()
+        payload = []
+        for prow in pair_rows:
+            s_ord, p_ord = prow[0], prow[1]
+            if s_ord is None or p_ord is None:
+                continue
+            diffs = [
+                name
+                for i, name in enumerate(left_columns)
+                if prow[2 + i] != prow[2 + len(left_columns) + i]
+            ]
+            if diffs:
+                payload.append((s_ord, p_ord, json.dumps(diffs)))
+        if payload:
+            connection.executemany("INSERT INTO annotations VALUES (?, ?, ?)", payload)
         selected = ", ".join(
             f"l.{quote_identifier('v_' + n)} AS l_{i}, r.{quote_identifier('v_' + n)} AS r_{i}"
             for i, n in enumerate(left_columns)
         )
         query = (
             "SELECT l.ordinal AS l_ord, r.ordinal AS r_ord, "
-            f"{selected} FROM sas_ranked l FULL OUTER JOIN python_ranked r ON {equality}"
+            "sa.diffs AS s_diffs, pa.diffs AS p_diffs, "
+            f"{selected} FROM sas_ranked l FULL OUTER JOIN python_ranked r ON {equality} "
+            "LEFT JOIN annotations sa ON sa.s_ordinal = l.ordinal "
+            "LEFT JOIN annotations pa ON pa.p_ordinal = r.ordinal"
         )
         detail_path = work / f"{artifact_id}.jsonl"
         with detail_path.open("w", encoding="utf-8") as output:
@@ -100,28 +141,31 @@ def compare(
             while rows := cursor.fetchmany(1024):
                 for row in rows:
                     l_ord, r_ord = row[0], row[1]
-                    for side, ordinal, has_other, offset in (
-                        ("sas", l_ord, r_ord is not None, 2),
-                        ("python", r_ord, l_ord is not None, 3),
+                    for side, ordinal, has_other, offset, diffs in (
+                        ("sas", l_ord, r_ord is not None, 4, row[2]),
+                        ("python", r_ord, l_ord is not None, 5, row[3]),
                     ):
                         if ordinal is not None:
                             values = {
                                 name: json.loads(row[offset + i * 2])
                                 for i, name in enumerate(left_columns)
                             }
+                            record = {
+                                "schema_version": 1,
+                                "dataset_id": dataset_id,
+                                "side": side,
+                                "staging_row_number": ordinal,
+                                "status": "PASS" if has_other else "FAIL",
+                                "reason": None
+                                if has_other
+                                else ("only_sas" if side == "sas" else "only_python"),
+                                "values": values,
+                            }
+                            if not has_other:
+                                record["differing_columns"] = json.loads(diffs) if diffs else None
                             output.write(
                                 json.dumps(
-                                    {
-                                        "schema_version": 1,
-                                        "dataset_id": dataset_id,
-                                        "side": side,
-                                        "staging_row_number": ordinal,
-                                        "status": "PASS" if has_other else "FAIL",
-                                        "reason": None
-                                        if has_other
-                                        else ("only_sas" if side == "sas" else "only_python"),
-                                        "values": values,
-                                    },
+                                    record,
                                     ensure_ascii=False,
                                     separators=(",", ":"),
                                 )

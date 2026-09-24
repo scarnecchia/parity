@@ -188,10 +188,6 @@ def run(config: RunConfig) -> int:
         summary = {
             "schema_version": 1,
             "status": status,
-            "policy": (
-                "cell values must match exactly (16.0 = 16, 16.2 != 16); "
-                "declared column types are not compared"
-            ),
             "versions": _versions(),
             "limits": {
                 "memory_limit": config.memory_limit,
