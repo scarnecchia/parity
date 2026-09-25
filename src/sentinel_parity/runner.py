@@ -16,7 +16,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import polars as pl
-import pyarrow as pa
 import pyarrow.parquet as pq
 
 from sentinel_parity.core.discovery import FileEntry, pair_files
@@ -25,7 +24,7 @@ from sentinel_parity.io.discovery import discover, validate_roots_and_output
 from sentinel_parity.io.duckdb_comparison import _unsupported, compare
 from sentinel_parity.io.report_writer import publish
 from sentinel_parity.io.sas_input import stage_sas_input
-from sentinel_parity.io.staging import _encode_scalar, stage
+from sentinel_parity.io.staging import _encode_column, stage
 
 if TYPE_CHECKING:
     from sentinel_parity.config import RunConfig
@@ -393,52 +392,31 @@ def _write_single_side_failure(
     names = {name.casefold(): name for name in columns}
     if len(names) != len(columns):
         raise ValueError("duplicate normalized column names")
+    prefix = (
+        '{"schema_version":1,"dataset_id":'
+        + json.dumps(ident)
+        + ',"side":'
+        + json.dumps(side)
+        + ',"staging_row_number":'
+    )
+    middle = ',"status":"FAIL","reason":' + json.dumps(reason) + ',"values":{'
     with destination.open("w", encoding="utf-8") as output:
         ordinal = 0
         for batch in frame.collect_batches(chunk_size=batch_size):
-            arrow = batch.to_arrow()
-            encoded_columns: dict[str, list[Any]] = {}
-            for normalized, original in names.items():
-                array = arrow.column(original)
-                if pa.types.is_timestamp(array.type):
-                    raw_values = array.cast(pa.int64()).to_pylist()
-                    scale = {"s": 1_000_000_000, "ms": 1_000_000, "us": 1_000, "ns": 1}[
-                        array.type.unit
-                    ]
-                    aware = array.type.tz is not None
-                    encoded_columns[normalized] = [
-                        None
-                        if value is None
-                        else json.loads(
-                            _encode_scalar(None, epoch_ns=value * scale, timezone_aware=aware)
-                        )
-                        for value in raw_values
-                    ]
-                else:
-                    encoded_columns[normalized] = [
-                        json.loads(_encode_scalar(value, round_digits=round_digits))
-                        if value is not None
-                        else None
-                        for value in array.to_pylist()
-                    ]
-            for row_index in range(batch.height):
-                values = {name: cells[row_index] for name, cells in encoded_columns.items()}
-                output.write(
-                    json.dumps(
-                        {
-                            "schema_version": 1,
-                            "dataset_id": ident,
-                            "side": side,
-                            "staging_row_number": ordinal,
-                            "status": "FAIL",
-                            "reason": reason,
-                            "values": values,
-                        },
-                        ensure_ascii=False,
-                    )
-                    + "\n"
-                )
-                ordinal += 1
+            parts: list[pl.Expr] = [pl.lit(prefix)]
+            parts.append(pl.arange(ordinal, ordinal + batch.height, dtype=pl.Int64).cast(pl.Utf8))
+            parts.append(pl.lit(middle))
+            for index, (normalized, original) in enumerate(names.items()):
+                series = batch.get_column(original).rename(normalized)
+                _, payloads = _encode_column(series, round_digits)
+                if index:
+                    parts.append(pl.lit(","))
+                parts.append(pl.lit(json.dumps(normalized) + ":"))
+                parts.append(pl.lit(payloads))
+            parts.append(pl.lit("}}"))
+            lines = batch.select(pl.concat_str(*parts).alias("line")).to_series()
+            output.write("\n".join(lines.to_list()) + "\n")
+            ordinal += batch.height
 
 
 def _one_sided_error(ident: str, entry: FileEntry, exc: Exception) -> dict[str, Any]:
