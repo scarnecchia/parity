@@ -12,6 +12,12 @@ python_root = "../parquet-output"
 # Default: "./parity-report" in the working directory when this key is omitted.
 output_dir = "./parity-report"
 
+# Optional string: request id written as a subfolder of the report directory, so
+# one report directory can hold many runs. Letters, numbers, and underscores only,
+# at most 64 characters; the reserved report name "details" is rejected.
+# Default: unset, writing the report directly into the report directory.
+# id = "run_001"
+
 # Optional string: DuckDB memory limit. Default: "1GB".
 memory_limit = "1GB"
 

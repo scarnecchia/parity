@@ -38,9 +38,7 @@ def run(config: RunConfig) -> int:
     pairing = pair_files(sas_files, python_files)
     if not pairing.matched:
         raise ValueError("no matched dataset pairs found")
-    if config.output_dir.exists() and any(config.output_dir.iterdir()):
-        raise ValueError("output directory must be empty")
-    output = config.output_dir.resolve()
+    output = config.effective_output_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)
     parent = config.temp_dir.resolve() if config.temp_dir else None
     run_temp = Path(tempfile.mkdtemp(prefix="sentinel-parity-", dir=parent))
@@ -231,6 +229,7 @@ def run(config: RunConfig) -> int:
             "schema_version": 1,
             "status": status,
             "run_at": datetime.now(UTC).isoformat(timespec="seconds"),
+            "request_id": config.id,
             "inputs": {
                 "sas_root": str(config.sas_root.resolve()),
                 "python_root": str(config.python_root.resolve()),

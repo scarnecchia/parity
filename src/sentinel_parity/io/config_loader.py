@@ -13,6 +13,7 @@ _ALLOWED = {
     "sas_root",
     "python_root",
     "output_dir",
+    "id",
     "memory_limit",
     "temp_dir",
     "max_temp_size",

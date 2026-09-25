@@ -33,6 +33,16 @@ def run_command(
     sas_root: Annotated[Path | None, typer.Option("--sas-root", "--sas_root")] = None,
     python_root: Annotated[Path | None, typer.Option("--python-root", "--python_root")] = None,
     output_dir: Annotated[Path | None, typer.Option("--output-dir")] = None,
+    request_id: Annotated[
+        str | None,
+        typer.Option(
+            "--id",
+            help=(
+                "Write the report into OUTPUT-DIR/<id>; letters, numbers, and underscores; "
+                "at most 64 characters; details is reserved."
+            ),
+        ),
+    ] = None,
     memory_limit: Annotated[str | None, typer.Option("--memory-limit")] = None,
     temp_dir: Annotated[Path | None, typer.Option("--temp-dir")] = None,
     max_temp_size: Annotated[str | None, typer.Option("--max-temp-size")] = None,
@@ -54,6 +64,7 @@ def run_command(
                 "sas_root": sas_root,
                 "python_root": python_root,
                 "output_dir": output_dir,
+                "id": request_id,
                 "memory_limit": memory_limit,
                 "temp_dir": temp_dir,
                 "max_temp_size": max_temp_size,

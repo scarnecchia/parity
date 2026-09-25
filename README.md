@@ -48,6 +48,7 @@ Open `parity-report/index.html` directly in a browser. The HTML report has no ne
 | `--sas-root`, `--sas_root` | `sas_root` | String path to the SAS output root | Required; no default |
 | `--python-root`, `--python_root` | `python_root` | String path to the Parquet output root | Required; no default |
 | `--output-dir` | `output_dir` | String path to the report directory | `./parity-report` |
+| `--id` | `id` | Nonempty string of letters, numbers, and underscores, at most 64 characters; the reserved report name `details` is rejected; writes the report into an `<id>` subfolder of the report directory | Unset; report goes directly to the report directory |
 | `--memory-limit` | `memory_limit` | Nonempty DuckDB memory-limit string, such as `"1GB"` or `"512MB"` | `"1GB"` |
 | `--temp-dir` | `temp_dir` | String path to an existing base directory for the run's private temporary directory | Unset; Python's system temporary-directory selection, including `TMPDIR` |
 | `--max-temp-size` | `max_temp_size` | Nonempty DuckDB maximum temporary-directory-size string, such as `"10GB"` | `"10GB"` |
@@ -68,7 +69,7 @@ DuckDB validates the resource-limit strings. These settings limit DuckDB executi
 - Dataset identity is the subdirectory plus the case-folded filename stem; one leading `r` plus two digits and an underscore is ignored for pairing on either side. For example, `dplocal/People.SAS7BDAT` pairs with `dplocal/people.parquet`, not `msoc/people.parquet`.
 - Duplicate identities on either side are rejected. Matching-extension symlinks and non-file entries are rejected.
 - A one-sided file produces a `FAIL` dataset if readable. If there are no matched dataset pairs anywhere across the two subdirectories, the run is a configuration error instead.
-- Inputs are never modified. Output and configured temporary locations cannot equal or be inside either input root. The output directory must be absent or empty; existing reports are not overwritten.
+- Inputs are never modified. Output and configured temporary locations cannot equal or be inside either input root. The report directory — `output_dir`, or `output_dir`/`<id>` when `id` is set — must be absent or empty; existing reports are not overwritten. Concurrent runs writing the same report directory are unsupported.
 
 ## Interpret the results
 
@@ -94,9 +95,11 @@ parity-report/
     <id>.jsonl
 ```
 
+With `id` set, these files are written into `parity-report/<id>/` so one report directory can hold several runs side by side.
+
 `index.html` contains dataset summaries and a **mismatch-only, bounded preview**, with links to the complete JSONL details. The preview limit applies separately to each side of each dataset; truncation counts show how much was omitted. Passing rows are in JSONL, not the mismatch preview.
 
-`summary.json` includes the schema version, overall status, package versions, execution limits, dataset entries, preview truncation counts, and `detail_links` mapping dataset IDs to relative JSONL paths. Dataset entries include names, status, reason, `conditions`, row counts, `matched_pairs`, `sas_only`, `python_only`, `row_order_mismatches`, and `detail_complete`. `row_order_mismatches` counts matched rows whose file positions differ — the comparison is order-independent, so reordered files still pass, and `index.html` flags this at the top of the dataset section. Available metadata includes reader schemas and metadata, original filenames, and original/normalized describe output for successfully compared pairs. Fields and metadata available for one-sided or error entries differ from successful pairs.
+`summary.json` includes the schema version, overall status, the request id as `request_id` (`null` when `id` is unset), package versions, execution limits, dataset entries, preview truncation counts, and `detail_links` mapping dataset IDs to relative JSONL paths. Dataset entries include names, status, reason, `conditions`, row counts, `matched_pairs`, `sas_only`, `python_only`, `row_order_mismatches`, and `detail_complete`. `row_order_mismatches` counts matched rows whose file positions differ — the comparison is order-independent, so reordered files still pass, and `index.html` flags this at the top of the dataset section. Available metadata includes reader schemas and metadata, original filenames, and original/normalized describe output for successfully compared pairs. Fields and metadata available for one-sided or error entries differ from successful pairs.
 
 `matched_pairs` counts equal occurrence pairs, not individual detail lines. Each matched pair contributes two `PASS` lines, one per side. `sas_only` and `python_only` count unmatched occurrences. For a completed comparison, each side's row count equals `matched_pairs` plus its unmatched count.
 

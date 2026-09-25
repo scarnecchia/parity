@@ -12,6 +12,8 @@ from typing import Any
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from sentinel_parity.config import DETAIL_DIR_NAME
+
 TEMPLATE = Path(__file__).parents[1] / "resources"
 
 
@@ -23,29 +25,30 @@ def publish(
     preview_truncation: dict[str, dict[str, int]],
 ) -> None:
     output.mkdir(parents=True, exist_ok=True)
-    detail_dir = output / "details"
-    detail_dir.mkdir(exist_ok=True)
-    links: dict[str, str] = {}
-    for artifact_id, source in details.items():
-        target = detail_dir / f"{artifact_id}.jsonl"
-        _atomic_copy(source, target)
-        links[artifact_id] = f"details/{artifact_id}.jsonl"
-    summary["detail_links"] = links
-    env = Environment(loader=FileSystemLoader(TEMPLATE), autoescape=select_autoescape(["html"]))
-    html = env.get_template("report.html").render(
-        summary=summary,
-        previews=previews,
-        links=links,
-        preview_truncation=preview_truncation,
-    )
+    detail_dir = output / DETAIL_DIR_NAME
     summary_path = output / "summary.json"
     index_path = output / "index.html"
     try:
+        detail_dir.mkdir(exist_ok=True)
+        links: dict[str, str] = {}
+        for artifact_id, source in details.items():
+            target = detail_dir / f"{artifact_id}.jsonl"
+            _atomic_copy(source, target)
+            links[artifact_id] = f"{DETAIL_DIR_NAME}/{artifact_id}.jsonl"
+        summary["detail_links"] = links
+        env = Environment(loader=FileSystemLoader(TEMPLATE), autoescape=select_autoescape(["html"]))
+        html = env.get_template("report.html").render(
+            summary=summary,
+            previews=previews,
+            links=links,
+            preview_truncation=preview_truncation,
+        )
         _atomic_text(summary_path, json.dumps(summary, ensure_ascii=False, indent=2) + "\n")
         _atomic_text(index_path, html)
     except BaseException:
         summary_path.unlink(missing_ok=True)
         index_path.unlink(missing_ok=True)
+        shutil.rmtree(detail_dir, ignore_errors=True)
         raise
 
 

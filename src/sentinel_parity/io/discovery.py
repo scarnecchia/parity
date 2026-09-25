@@ -38,7 +38,7 @@ def discover(root: Path, extension: str) -> list[FileEntry]:
 def validate_roots_and_output(config: RunConfig) -> None:
     sas_root = config.sas_root.resolve()
     python_root = config.python_root.resolve()
-    output = config.output_dir.resolve()
+    output = config.effective_output_dir.resolve()
     temp = config.temp_dir.resolve() if config.temp_dir else None
     for candidate in (output, temp):
         if candidate and (

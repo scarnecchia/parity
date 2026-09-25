@@ -41,7 +41,7 @@ def compare(
             "max_temp_directory_size": max_temp_size,
             "temp_directory": str(spill),
             "preserve_insertion_order": "false",
-            "threads": "1",
+            "threads": "4",
         },
     )
     try:

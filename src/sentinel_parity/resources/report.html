@@ -419,7 +419,7 @@ footer .build { font: var(--text-xs)/1.6 var(--mono); color: var(--ink-faint); o
   <p>Reports can contain sensitive data; store and delete them according to local data-handling rules. Previews are bounded; JSONL details contain the complete row-level result.</p>
   {% set report_inputs = summary.get("inputs", {}) %}
   {% set report_limits = summary.get("limits", {}) %}
-  <p class="build">Run {{ summary.get("run_at", "unknown") }}{% if report_inputs %} · sas {{ report_inputs.get("sas_root", "?") }} · parquet {{ report_inputs.get("python_root", "?") }}{% endif %} · round {{ "raw" if report_limits.get("round_digits") is none else report_limits["round_digits"] }} · preview rows {{ report_limits.get("preview_rows", "?") }}</p>
+  <p class="build">Run {{ summary.get("run_at", "unknown") }}{% if summary.get("request_id") %} · id {{ summary["request_id"] }}{% endif %}{% if report_inputs %} · sas {{ report_inputs.get("sas_root", "?") }} · parquet {{ report_inputs.get("python_root", "?") }}{% endif %} · round {{ "raw" if report_limits.get("round_digits") is none else report_limits["round_digits"] }} · preview rows {{ report_limits.get("preview_rows", "?") }}</p>
   <p class="build">{% for name, version in summary.get("versions", {}).items() %}{{ name }} {{ version }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
 </footer>
 </body>

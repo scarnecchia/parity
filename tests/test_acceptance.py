@@ -321,12 +321,14 @@ def test_config_cli_equivalence(tmp_path: Path) -> None:
     config_summary = json.loads((config_output / "summary.json").read_text())
     for summary in (direct_summary, config_summary):
         assert summary["status"] == "PASS"
+        assert summary["request_id"] is None
         dataset = summary["datasets"][0]
         assert (dataset["sas_rows"], dataset["python_rows"], dataset["matched_pairs"]) == (
             1440,
             1440,
             1440,
         )
+    assert "· id" not in (direct_output / "index.html").read_text()
 
 
 def test_config_precedence_and_relative_paths(tmp_path: Path) -> None:
@@ -351,6 +353,91 @@ def test_config_precedence_and_relative_paths(tmp_path: Path) -> None:
     assert result.python_root == (tmp_path / "python").resolve()
     assert result.output_dir == (tmp_path / "reports").resolve()
     assert result.preview_rows == 9
+
+
+def test_id_cli_and_toml_precedence(tmp_path: Path) -> None:
+    config = tmp_path / "run.toml"
+    config.write_text('sas_root="sas"\npython_root="python"\noutput_dir="reports"\nid="toml_id"\n')
+    from_toml = load_config(config, {"id": None})
+    from_cli = load_config(config, {"id": "cli_id"})
+    assert from_toml.id == "toml_id"
+    assert from_cli.id == "cli_id"
+    assert from_toml.effective_output_dir == from_toml.output_dir / "toml_id"
+    assert from_cli.effective_output_dir == from_cli.output_dir / "cli_id"
+
+
+def test_id_validation(tmp_path: Path) -> None:
+    sas, python = _roots(tmp_path)
+    default = RunConfig(sas, python, tmp_path / "out")
+    assert default.effective_output_dir == default.output_dir
+    for bad in ("", "with-dash", "with.dot", "with/slash", "with space", "café"):
+        with pytest.raises(ValueError, match="id must contain"):
+            RunConfig(sas, python, tmp_path / "out", id=bad)
+    with pytest.raises(ValueError, match="id must be a string"):
+        RunConfig(sas, python, tmp_path / "out", id=5)
+    with pytest.raises(ValueError, match="at most 64 characters"):
+        RunConfig(sas, python, tmp_path / "out", id="a" * 65)
+    with pytest.raises(ValueError, match="reserved"):
+        RunConfig(sas, python, tmp_path / "out", id="details")
+    with pytest.raises(ValueError, match="reserved"):
+        RunConfig(sas, python, tmp_path / "out", id="Details")
+    mixed = RunConfig(sas, python, tmp_path / "out", id="Run_01")
+    assert mixed.effective_output_dir.name == "Run_01"
+    with pytest.raises(ValueError, match="outside input roots"):
+        run(RunConfig(sas, python, tmp_path, id="sas"))
+
+
+def test_invalid_id_exits_two(tmp_path: Path) -> None:
+    sas, python = _roots(tmp_path)
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--sas-root",
+            str(sas),
+            "--python-root",
+            str(python),
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--id",
+            "with-dash",
+        ],
+    )
+    assert result.exit_code == 2
+    assert "id must contain only letters, numbers, and underscores" in result.stderr
+
+
+def test_id_writes_reports_into_isolated_subfolders(tmp_path: Path) -> None:
+    sas, python = _roots(tmp_path)
+    source = Path(__file__).resolve().parents[1] / ".parity-fixtures" / "productsales.sas7bdat"
+    shutil.copyfile(source, sas / "dplocal" / "data.sas7bdat")
+    polars_readstat.ScanReadstat(str(sas / "dplocal" / "data.sas7bdat")).df.collect().write_parquet(
+        python / "dplocal" / "data.parquet"
+    )
+    output = tmp_path / "reports"
+    args = [
+        "run",
+        "--sas-root",
+        str(sas),
+        "--python-root",
+        str(python),
+        "--output-dir",
+        str(output),
+    ]
+    first = runner.invoke(app, args + ["--id", "pkg_a"])
+    second = runner.invoke(app, args + ["--id", "pkg_b"])
+    assert first.exit_code == second.exit_code == 0
+    assert not (output / "index.html").exists()
+    assert not (output / "summary.json").exists()
+    assert (output / "pkg_a" / "index.html").is_file()
+    assert (output / "pkg_b" / "summary.json").is_file()
+    summary = json.loads((output / "pkg_a" / "summary.json").read_text())
+    assert summary["status"] == "PASS"
+    assert summary["request_id"] == "pkg_a"
+    assert "id pkg_a" in (output / "pkg_a" / "index.html").read_text()
+    rerun = runner.invoke(app, args + ["--id", "pkg_a"])
+    assert rerun.exit_code == 2
+    assert "empty" in rerun.stderr
 
 
 def test_invalid_config(tmp_path: Path) -> None:
@@ -1177,6 +1264,7 @@ def test_report_write_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     assert "operation failed (OSError)" in result.stderr
     assert not (out / "index.html").exists()
     assert not (out / "summary.json").exists()
+    assert not (out / "details").exists()
     assert not list(out.glob(".index.html.*"))
 
 
