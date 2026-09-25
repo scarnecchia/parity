@@ -1424,12 +1424,19 @@ def test_identical_sides_pass_with_plain_records(tmp_path: Path) -> None:
 
 def test_staging_is_batch_size_independent(tmp_path: Path) -> None:
     import adversarial
+    import pyarrow.parquet as pq
 
     source = tmp_path / "a.parquet"
     adversarial.write_adversarial(source, "a")
     whole = adversarial.stage_grid(source, tmp_path / "whole")
     sliced = adversarial.stage_grid(source, tmp_path / "sliced", batch_size=7)
     assert sliced == whole
+    observed = tmp_path / "observed"
+    observed.mkdir()
+    info = stage(source, "python", observed, batch_size=7)
+    assert info["observed_max_batch_size"] == 7
+    ordinals = pq.read_table(info["path"], columns=["ordinal"]).column("ordinal").to_pylist()
+    assert ordinals == list(range(adversarial.ROW_COUNT))
 
 
 def test_summary_detail_reconciliation(tmp_path: Path) -> None:
