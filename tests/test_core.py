@@ -3,6 +3,9 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from fractions import Fraction
 
+import adversarial
+import polars as pl
+import pyarrow as pa
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
@@ -18,6 +21,7 @@ from sentinel_parity.core.value_encoding import (
     temporal_ns_key,
     typed_value,
 )
+from sentinel_parity.core.vector_encoding import canonical_keys, vector_keys
 
 
 def test_schema_name_alignment() -> None:
@@ -236,3 +240,111 @@ def test_rounded_display_huge_integral_envelope() -> None:
     assert Decimal(shown) == round_to_decimal_places(Decimal(1e308), 2)
     assert envelope["canonical"] == canonical_key(1e308, round_digits=2)
     assert rounded_display(Decimal("-0.0"), 2) == Decimal("-0")
+
+
+def _series(name: str, values: list[object], dtype: pl.DataType | None = None) -> pl.Series:
+    return pl.Series(name, values, dtype=dtype)  # type: ignore[arg-type]
+
+
+def _assert_builder_matches_scalar(values: pl.Series, round_digits: int | None = None) -> None:
+    built = vector_keys(values, round_digits)
+    assert built is not None, values.dtype
+    keys, residual = built
+    assert keys.len() == values.len()
+    for index in range(values.len()):
+        expected = canonical_key(values[index], round_digits=round_digits)
+        if residual[index]:
+            assert keys[index] is None, index
+        else:
+            assert keys[index] == expected, index
+
+
+def test_vector_keys_match_scalar_golden() -> None:
+    """Every adversarial column keys identically to the scalar originals."""
+    table = adversarial.adversarial_table("a")
+    for column in table.column_names:
+        if column == "Instant":
+            # ns timestamps have no Python scalar; staging's scalar path keys
+            # them from the epoch-ns integer via temporal_ns_key.
+            raw = table.column(column).cast(pa.int64()).to_pylist()
+            series = _series("instant", raw, pl.Int64).cast(pl.Datetime("ns"))
+            keys, residual = vector_keys(series, None)
+            assert keys is not None and residual is not None and not residual.any()
+            for index, value in enumerate(raw):
+                assert keys[index] == ("null" if value is None else temporal_ns_key(value)), index
+            continue
+        raw = table.column(column).to_pylist()
+        if column in ("Exact", "Blob", "Tiny"):
+            # Decimal, binary, and unsigned widths have no vector builder.
+            dtype = {"Exact": pl.Object, "Blob": pl.Binary, "Tiny": pl.UInt8}[column]
+            assert vector_keys(_series(column.lower(), raw, dtype), None) is None, column
+            continue
+        series = _series("moment", raw) if column == "Moment" else _series(column.lower(), raw)
+        _assert_builder_matches_scalar(series)
+        if column == "Amount":
+            # Exact decimal rounding of binary floats has no vectorized form,
+            # so round_digits sends the whole float column through the scalar
+            # path.
+            assert vector_keys(series, round_digits=2) is None
+        elif column == "Code":
+            # Pure-integer text is round-invariant, so its builder survives.
+            _assert_builder_matches_scalar(series, round_digits=2)
+
+
+@given(
+    st.lists(
+        st.one_of(st.integers(min_value=-(2**63), max_value=2**63 - 1), st.none()), max_size=40
+    )
+)
+def test_vector_key_properties_integers(values: list[int | None]) -> None:
+    _assert_builder_matches_scalar(_series("v", values))
+
+
+@given(st.lists(st.one_of(st.floats(allow_nan=True, allow_infinity=True), st.none()), max_size=40))
+def test_vector_key_properties_floats(values: list[float | None]) -> None:
+    _assert_builder_matches_scalar(_series("v", values))
+
+
+@given(st.lists(st.one_of(st.text(), st.none()), max_size=40))
+def test_vector_key_properties_text(values: list[str | None]) -> None:
+    _assert_builder_matches_scalar(_series("v", values))
+    # Integer text is round-invariant, so the builder also holds with digits.
+    _assert_builder_matches_scalar(_series("v", values), round_digits=2)
+
+
+@given(st.lists(st.one_of(st.dates(), st.none()), max_size=40))
+def test_vector_key_properties_dates(values: list[date | None]) -> None:
+    _assert_builder_matches_scalar(_series("v", values))
+
+
+@given(
+    st.lists(
+        st.one_of(st.datetimes(timezones=st.one_of(st.none(), st.just(UTC))), st.none()),
+        max_size=40,
+    )
+)
+def test_vector_key_properties_datetimes(values: list[datetime | None]) -> None:
+    _assert_builder_matches_scalar(_series("v", values))
+
+
+@given(st.lists(st.integers(min_value=-(2**63), max_value=2**63 - 1), max_size=20))
+def test_vector_nanosecond_keys_match_temporal_ns_key(values: list[int]) -> None:
+    series = _series("v", values, pl.Int64).cast(pl.Datetime("ns"))
+    keys = canonical_keys(series, None)
+    for index, value in enumerate(values):
+        assert keys[index] == temporal_ns_key(value), index
+
+
+def test_vector_builder_dispatch_whole_column_fallbacks() -> None:
+    assert vector_keys(_series("v", [b"\x00", None]), None) is None
+    assert vector_keys(_series("v", [Decimal("1.5"), None]), None) is None
+    assert vector_keys(_series("v", [1, None], pl.UInt8), None) is None
+    assert vector_keys(_series("v", [2**40, None], pl.UInt64), None) is None
+    assert vector_keys(_series("v", [0.5, None], pl.Float32), 3) is None
+    assert vector_keys(_series("v", [0.5, None], pl.Float64), 3) is None
+    # Float32 widens to Float64 value-exactly, so its builder still applies.
+    assert vector_keys(_series("v", [0.5, None], pl.Float32), None) is not None
+    built = vector_keys(_series("v", [True, False, None]), None)
+    assert built is not None
+    keys, residual = built
+    assert keys.to_list() == ["n:1/1", "n:0/1", "null"] and not residual.any()
