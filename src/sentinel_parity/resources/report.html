@@ -236,7 +236,7 @@ details pre {
 .cell-chip { overflow-wrap: anywhere; }
 .cell-chip .name { color: var(--ink-faint); }
 .cell-chip .name::after { content: "="; margin-left: 0.125rem; color: var(--ink-faint); }
-.cell-chip.is-diff { background: var(--fail-bg); color: var(--fail); border-radius: 0.25rem; padding: 0 0.3rem; }
+.cell-chip.is-diff { background: var(--fail-bg); color: var(--fail); border-radius: 0.25rem; padding: 0.0625rem 0.3rem; }
 .cell-chip.is-diff .name, .cell-chip.is-diff .name::after { color: var(--fail); }
 .row-num {
   font: var(--text-xs)/1.4 var(--mono);
@@ -306,24 +306,24 @@ footer .build { font: var(--text-xs)/1.6 var(--mono); color: var(--ink-faint); o
   <p class="story">
     {%- if dataset.reason == "schema_columns_differ" -%}
       {%- if sas_cols and py_cols -%}
-        SAS has {{ sas_cols|length }} column{{ "s" if sas_cols|length != 1 }} Parquet lacks ({{ column_list(sas_cols) }}) and Parquet has {{ py_cols|length }} column{{ "s" if py_cols|length != 1 }} SAS lacks ({{ column_list(py_cols) }}) — no row can match until the column sets agree.
+        SAS has {{ sas_cols|length }} column{{ "s" if sas_cols|length != 1 }} Parquet lacks ({{ column_list(sas_cols) }}) and Parquet has {{ py_cols|length }} column{{ "s" if py_cols|length != 1 }} SAS lacks ({{ column_list(py_cols) }}), so no row can match until the column sets agree.
       {%- elif sas_cols -%}
-        SAS has {{ sas_cols|length }} column{{ "s" if sas_cols|length != 1 }} Parquet lacks ({{ column_list(sas_cols) }}) — no row can match until the column sets agree.
+        SAS has {{ sas_cols|length }} column{{ "s" if sas_cols|length != 1 }} Parquet lacks ({{ column_list(sas_cols) }}), so no row can match until the column sets agree.
       {%- elif py_cols -%}
-        Parquet has {{ py_cols|length }} column{{ "s" if py_cols|length != 1 }} SAS lacks ({{ column_list(py_cols) }}) — no row can match until the column sets agree.
+        Parquet has {{ py_cols|length }} column{{ "s" if py_cols|length != 1 }} SAS lacks ({{ column_list(py_cols) }}), so no row can match until the column sets agree.
       {%- else -%}
         Both files have the same columns in a different order, so rows are not compared.
       {%- endif %}
     {%- elif dataset.reason == "missing_counterpart" -%}
       No {{ "Parquet" if dataset.sas_rows else "SAS" }} counterpart was found for this dataset, so none of its rows can be compared.
     {%- else -%}
-      {%- if pairs %}{{ pairs }} row pair{{ "s" if pairs != 1 }} do{{ "es" if pairs == 1 }} not match — differing columns: {% for name, count in counts.items() %}<span class="col-name">{{ name }}</span> ({{ count }} row{{ "s" if count != 1 }}){{ ", " if not loop.last }}{% endfor %}. {% endif -%}
+      {%- if pairs %}{{ pairs }} row pair{{ "s" if pairs != 1 }} do{{ "es" if pairs == 1 }} not match. Differing columns: {% for name, count in counts.items() %}<span class="col-name">{{ name }}</span> ({{ count }} row{{ "s" if count != 1 }}){{ ", " if not loop.last }}{% endfor %}. {% endif -%}
       {%- if dataset.sas_only > pairs %}{{ dataset.sas_only - pairs }} row{{ "s" if (dataset.sas_only - pairs) != 1 }} appear{{ "s" if (dataset.sas_only - pairs) == 1 }} only in SAS. {% endif -%}
       {%- if dataset.python_only > pairs %}{{ dataset.python_only - pairs }} row{{ "s" if (dataset.python_only - pairs) != 1 }} appear{{ "s" if (dataset.python_only - pairs) == 1 }} only in Parquet.{% endif -%}
     {%- endif %}
   </p>
   {% elif dataset.status == "ERROR" %}
-  <p class="story">The comparison did not run{% if dataset.get("error_message") %} — {{ dataset["error_message"] }}{% endif %}.</p>
+  <p class="story">The comparison did not run{% if dataset.get("error_message") %}: {{ dataset["error_message"] }}{% endif %}.</p>
   {% endif %}
   {% if dataset.status != "ERROR" %}
   {% set stats = [
@@ -372,10 +372,10 @@ footer .build { font: var(--text-xs)/1.6 var(--mono); color: var(--ink-faint); o
     </span>
     {% endmacro %}
     {% macro reason_phrase(reason) -%}
-    {%- if reason == "only_sas" %}every previewed row appears only in SAS
-    {%- elif reason == "only_python" %}every previewed row appears only in Parquet
-    {%- elif reason == "missing_counterpart" %}every previewed row has no counterpart on the other side
-    {%- else %}every previewed row is flagged {{ reason }}
+    {%- if reason == "only_sas" %}Every previewed row appears only in SAS
+    {%- elif reason == "only_python" %}Every previewed row appears only in Parquet
+    {%- elif reason == "missing_counterpart" %}Every previewed row has no counterpart on the other side
+    {%- else %}Every previewed row is flagged {{ reason }}
     {%- endif %}
     {%- endmacro %}
     {% set paired = preview_records|selectattr("pair_id")|groupby("pair_id") %}
