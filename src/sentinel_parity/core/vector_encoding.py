@@ -187,3 +187,36 @@ def _temporal_keys(values: pl.Series) -> pl.Series:
         )
         .to_series()
     )
+
+
+# repr() and Polars agree on the shortest round-trip digits of a float; they
+# differ only in three spellings, fixed by float_repr: positional values in
+# [1e-5, 1e-4) that repr() writes scientifically (always four leading
+# fractional zeros, so the exponent is the constant e-05), single-digit
+# negative exponents repr() zero-pads, and NaN spelled "NaN".
+_SCIENTIFIC_SMALL = r"^(-?[1-9](?:\.\d+)?)e-([0-9])$"
+_POSITIONAL_SMALL = r"^(-?)0\.0{4}([1-9][0-9]*)$"
+
+
+def float_repr(values: pl.Series) -> pl.Series:
+    """Python repr() display strings for a Float64 column."""
+    name = values.name
+    rendered = values.cast(pl.Utf8)
+    signs = rendered.str.extract(_POSITIONAL_SMALL, 1)
+    digits = rendered.str.extract(_POSITIONAL_SMALL, 2)
+    mantissa = (
+        pl.when(digits.str.len_bytes() == 1)
+        .then(digits)
+        .otherwise(pl.concat_str(digits.str.head(1), pl.lit("."), digits.str.slice(1)))
+    )
+    return (
+        rendered.to_frame()
+        .select(
+            pl.when(signs.is_not_null())
+            .then(pl.concat_str(signs.fill_null(""), mantissa, pl.lit("e-05")))
+            .otherwise(pl.col(name).str.replace(_SCIENTIFIC_SMALL, "${1}e-0${2}"))
+            .str.replace("NaN", "nan")
+            .alias(name)
+        )
+        .to_series()
+    )

@@ -21,7 +21,7 @@ from sentinel_parity.core.value_encoding import (
     temporal_ns_key,
     typed_value,
 )
-from sentinel_parity.core.vector_encoding import canonical_keys, vector_keys
+from sentinel_parity.core.vector_encoding import canonical_keys, float_repr, vector_keys
 
 
 def test_schema_name_alignment() -> None:
@@ -348,3 +348,61 @@ def test_vector_builder_dispatch_whole_column_fallbacks() -> None:
     assert built is not None
     keys, residual = built
     assert keys.to_list() == ["n:1/1", "n:0/1", "null"] and not residual.any()
+
+
+def test_float_repr_matches_python_repr_on_specials() -> None:
+    specials = [
+        16.0,
+        -0.0,
+        0.0,
+        5e-324,
+        1e308,
+        -1e308,
+        1e-308,
+        0.1,
+        -16.2,
+        float(2**53),
+        1e15,
+        1e16,
+        1e-4,
+        1e-5,
+        1.5e-5,
+        0.0000999,
+        1e20,
+        1e300,
+        2.5,
+        float("nan"),
+        float("inf"),
+        float("-inf"),
+    ]
+    rendered = float_repr(_series("v", specials))
+    for value, got in zip(specials, rendered.to_list()):
+        assert got == repr(value), value
+
+
+@given(st.lists(st.floats(allow_nan=True, allow_infinity=True), min_size=1, max_size=64))
+def test_float_repr_matches_python_repr(values: list[float]) -> None:
+    rendered = float_repr(_series("v", values))
+    for value, got in zip(values, rendered.to_list()):
+        assert got == repr(value), value
+
+
+def test_float_repr_matches_python_repr_seeded_sweep() -> None:
+    import math
+    import random
+    import struct
+
+    rng = random.Random(20260925)
+    values = [rng.uniform(-1e6, 1e6) for _ in range(20000)]
+    values += [rng.uniform(-1, 1) for _ in range(20000)]
+    values += [10.0 ** rng.randint(-300, 300) for _ in range(20000)]
+    values += [rng.getrandbits(53) / math.ldexp(1.0, -rng.randint(0, 1074)) for _ in range(20000)]
+    values += [float(rng.getrandbits(64)) for _ in range(20000)]
+    # Arbitrary bit patterns: subnormals, NaNs, both zeros, huge exponents.
+    values += [
+        struct.unpack("<d", struct.pack("<Q", bits))[0]
+        for bits in (rng.getrandbits(64) for _ in range(20000))
+    ]
+    rendered = float_repr(pl.Series("v", values))
+    for value, got in zip(values, rendered.to_list()):
+        assert got == repr(value), value
