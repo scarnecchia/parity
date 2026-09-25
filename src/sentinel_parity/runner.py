@@ -8,6 +8,7 @@ import os
 import shutil
 import tempfile
 import uuid
+from datetime import UTC, datetime
 from importlib.metadata import version
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -225,6 +226,11 @@ def run(config: RunConfig) -> int:
         summary = {
             "schema_version": 1,
             "status": status,
+            "run_at": datetime.now(UTC).isoformat(timespec="seconds"),
+            "inputs": {
+                "sas_root": str(config.sas_root.resolve()),
+                "python_root": str(config.python_root.resolve()),
+            },
             "versions": _versions(),
             "limits": {
                 "memory_limit": config.memory_limit,

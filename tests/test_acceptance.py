@@ -997,6 +997,13 @@ def test_summary_detail_reconciliation(tmp_path: Path) -> None:
     assert dataset["matched_pairs"] * 2 == len(
         Path(tmp_path / "out" / summary["detail_links"][dataset["id"]]).read_text().splitlines()
     )
+    assert summary["run_at"].endswith("+00:00") or summary["run_at"].endswith("Z")
+    assert summary["inputs"]["sas_root"] == str(sas.resolve())
+    assert summary["inputs"]["python_root"] == str(python.resolve())
+    assert summary["limits"]["round_digits"] is None
+    html = (tmp_path / "out" / "index.html").read_text()
+    assert "Run " in html and str(sas.resolve()) in html and str(python.resolve()) in html
+    assert "round raw" in html
 
 
 def test_exit_code_precedence(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
