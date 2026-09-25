@@ -5,7 +5,7 @@ zero, subnormals, extreme exponents, integers-as-floats, NaN and infinities,
 Decimal-grammar text ("1_0", "Infinity", "1e999", Unicode digits), blank and
 whitespace text, Unicode text, nulls, binary, decimal128, ns timestamps, and
 tz-aware timestamps.  Variant "b" of the dataset derives from variant "a" by
-a fixed permutation, seven key-changing value tweaks, one dropped row, and
+a fixed permutation, eight key-changing value tweaks, one dropped row, and
 one duplicated row, so a two-sided comparison exercises occurrence pairing,
 order mismatches, FAIL annotations, and one-sided excess rows deterministically.
 """
@@ -93,7 +93,7 @@ _BASE_ROWS: tuple[tuple[Any, ...], ...] = (
         -(2**63),
         None,
         math.inf,
-        "0x1A",
+        "\u0661\u0662",
         None,
         9_223_372_036_854_775_807,
         -9_223_372_036_854_775,
@@ -208,13 +208,17 @@ def write_disjoint(path: Path) -> None:
 
 
 def stage_grid(
-    source: Path, work: Path, kind: str = "python", round_digits: int | None = None
+    source: Path,
+    work: Path,
+    kind: str = "python",
+    round_digits: int | None = None,
+    batch_size: int = 65536,
 ) -> dict[str, Any]:
     """Stage one file and read its canonical k_/v_ columns back verbatim."""
     from sentinel_parity.io.staging import stage
 
     work.mkdir(parents=True, exist_ok=True)
-    info = stage(source, kind, work, round_digits=round_digits)
+    info = stage(source, kind, work, batch_size=batch_size, round_digits=round_digits)
     names = list(info["columns"])
     table = pq.read_table(
         info["path"], columns=[f"{prefix}{name}" for name in names for prefix in ("k_", "v_")]

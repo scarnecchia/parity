@@ -182,7 +182,9 @@ def _compare_shared(
     started = time.monotonic()
     matched, sas_only, python_only = _join_stats(connection, equality)
     # The occurrence-aligned join yields the per-key multiset difference by
-    # construction; the conservation identity is the independent cross-check.
+    # construction; the conservation identity against the staged row totals
+    # is the runtime tripwire for row loss or join fan-out (a row-count
+    # invariant, not a re-derivation of the join itself).
     if matched + sas_only != left["rows"] or matched + python_only != right["rows"]:
         raise RuntimeError("row counts violate multiset conservation")
     run_log.phase_done(dataset_id, "multiset", started)
@@ -275,14 +277,16 @@ def _compare_shared(
     )
     connection.execute(
         f"COPY (SELECT rec FROM ({records_query}) WHERE rec IS NOT NULL) "
-        f"TO {_sql_string(str(detail_path))} "
-        "(FORMAT CSV, HEADER FALSE, DELIMITER '|', QUOTE '', ESCAPE '')"
+        f"TO {_sql_string(str(detail_path))} " + _COPY_NDJSON
     )
     run_log.phase_done(dataset_id, "details", started)
     return matched, sas_only, python_only, order_mismatches
 
 
 _ABSENT_COLUMN_JSON = '{"type":"absent_column"}'
+
+
+_COPY_NDJSON = "(FORMAT CSV, HEADER FALSE, DELIMITER '|', QUOTE '', ESCAPE '')"
 
 
 def _sql_string(value: str) -> str:
@@ -408,7 +412,12 @@ def _absent_side_details(
     dataset_id: str,
     union: list[str],
 ) -> None:
-    """Export every row of both sides when no column is shared to compare."""
+    """Export every row of both sides when no column is shared to compare.
+
+    Unlike the shared-column writer, these FAIL records never carry
+    differing_columns/pair_id keys — there are no excess-row pairs to
+    annotate — and that asymmetry is part of the frozen record contract.
+    """
     dataset_ref = _sql_string(dataset_id)
     selects: list[str] = []
     for side, item in (("sas", left), ("python", right)):
@@ -421,6 +430,5 @@ def _absent_side_details(
         )
     connection.execute(
         "COPY (SELECT rec FROM (" + " UNION ALL ".join(selects) + ")) "
-        f"TO {_sql_string(str(path))} "
-        "(FORMAT CSV, HEADER FALSE, DELIMITER '|', QUOTE '', ESCAPE '')"
+        f"TO {_sql_string(str(path))} " + _COPY_NDJSON
     )

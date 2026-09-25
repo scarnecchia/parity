@@ -239,7 +239,8 @@ def test_rounded_display_huge_integral_envelope() -> None:
     assert "E" not in shown
     assert Decimal(shown) == round_to_decimal_places(Decimal(1e308), 2)
     assert envelope["canonical"] == canonical_key(1e308, round_digits=2)
-    assert rounded_display(Decimal("-0.0"), 2) == Decimal("-0")
+    # Decimal('-0') == Decimal('0'), so the sign is asserted through str().
+    assert str(rounded_display(Decimal("-0.0"), 2)) == "-0"
 
 
 def _series(name: str, values: list[object], dtype: pl.DataType | None = None) -> pl.Series:
@@ -333,6 +334,21 @@ def test_vector_nanosecond_keys_match_temporal_ns_key(values: list[int]) -> None
     keys = canonical_keys(series, None)
     for index, value in enumerate(values):
         assert keys[index] == temporal_ns_key(value), index
+
+
+@given(
+    st.lists(
+        st.integers(min_value=-(2**62), max_value=2**62),
+        min_size=1,
+        max_size=20,
+    )
+)
+def test_vector_temporal_keys_match_across_units(values: list[int]) -> None:
+    for unit, scale in (("ms", 1_000_000), ("us", 1_000), ("ns", 1)):
+        series = _series("v", values, pl.Int64).cast(pl.Datetime(unit))
+        keys = canonical_keys(series, None)
+        for index, value in enumerate(values):
+            assert keys[index] == temporal_ns_key(value * scale), (unit, index)
 
 
 def test_vector_builder_dispatch_whole_column_fallbacks() -> None:

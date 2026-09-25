@@ -19,6 +19,7 @@ from sentinel_parity.cli import app
 from sentinel_parity.config import RunConfig
 from sentinel_parity.io.config_loader import load_config
 from sentinel_parity.io.discovery import discover
+from sentinel_parity.io.duckdb_comparison import compare
 from sentinel_parity.io.staging import stage
 from sentinel_parity.runner import run
 
@@ -1285,52 +1286,150 @@ def test_duckdb_json_record_export_contract(tmp_path: Path) -> None:
     assert lines.read_text(encoding="utf-8").splitlines() == ['{"a":1}', '{"a":1}']
 
 
-def _load_golden(name: str) -> dict[str, object]:
-    import gzip
+def test_detail_records_match_staged_values(tmp_path: Path) -> None:
+    """Independent oracle: detail records rebuilt from staged k_/v_ values.
 
-    return json.loads(
-        gzip.decompress((Path(__file__).with_name("golden") / name).read_bytes()).decode("utf-8")
+    Replaces frozen golden capture files (generated test data stays out of
+    the repository): expected pairing comes from a Counter multiset diff
+    over the staged canonical keys, and every emitted cell must equal the
+    staged envelope verbatim.
+    """
+    import adversarial
+    import pyarrow.parquet as pq
+
+    def staged_rows(path: Path, work: Path) -> dict[int, dict[str, str | None]]:
+        work.mkdir(parents=True)
+        info = stage(path, "python", work)
+        table = pq.read_table(
+            info["path"],
+            columns=["ordinal", *[f"{p}{c}" for c in info["columns"] for p in ("k_", "v_")]],
+        )
+        data = {name: table.column(name).to_pylist() for name in table.column_names}
+        return {
+            ordinal: {name: data[name][index] for name in data if name != "ordinal"}
+            for index, ordinal in enumerate(data["ordinal"])
+        }
+
+    left_path = tmp_path / "left.parquet"
+    right_path = tmp_path / "right.parquet"
+    adversarial.write_adversarial(left_path, "a")
+    adversarial.write_adversarial(right_path, "b")
+    staged = {
+        "sas": staged_rows(left_path, tmp_path / "sl"),
+        "python": staged_rows(right_path, tmp_path / "sr"),
+    }
+    for part in ("l", "r", "cmp"):
+        (tmp_path / part).mkdir(parents=True, exist_ok=True)
+    left = stage(left_path, "python", tmp_path / "l")
+    right = stage(right_path, "python", tmp_path / "r")
+    result = compare(left, right, tmp_path / "cmp", "1GB", "10GB", "refadv")
+
+    shared = [name for name in left["columns"] if name in right["columns"]]
+    union = list(left["columns"]) + [
+        name for name in right["columns"] if name not in left["columns"]
+    ]
+
+    def key_of(side: str, ordinal: int) -> tuple[str | None, ...]:
+        row = staged[side][ordinal]
+        return tuple(row[f"k_{name}"] for name in shared)
+
+    counters = {
+        side: Counter(key_of(side, ordinal) for ordinal in staged[side])
+        for side in ("sas", "python")
+    }
+    excess_ordinals: dict[str, list[int]] = {}
+    for side, other in (("sas", "python"), ("python", "sas")):
+        remaining = counters[side] - counters[other]
+        # The implementation marks the highest occurrences per key as excess
+        # (occurrence numbers run in ordinal order), so consume from the end.
+        marked = []
+        for ordinal in sorted(staged[side], reverse=True):
+            key = key_of(side, ordinal)
+            if remaining[key] > 0:
+                remaining[key] -= 1
+                marked.append(ordinal)
+        excess_ordinals[side] = sorted(marked)
+
+    annotation: dict[tuple[str, int], tuple[list[str] | None, int | None]] = {}
+    pair_ranks = {
+        side: {ordinal: rank + 1 for rank, ordinal in enumerate(excess_ordinals[side])}
+        for side in ("sas", "python")
+    }
+    for sas_ordinal, python_ordinal in zip(
+        excess_ordinals["sas"], excess_ordinals["python"], strict=True
+    ):
+        diffs = [
+            name
+            for name in shared
+            if staged["sas"][sas_ordinal][f"k_{name}"]
+            != staged["python"][python_ordinal][f"k_{name}"]
+        ]
+        annotation[("sas", sas_ordinal)] = (diffs or None, pair_ranks["sas"][sas_ordinal])
+        annotation[("python", python_ordinal)] = (
+            diffs or None,
+            pair_ranks["python"][python_ordinal],
+        )
+
+    records = [json.loads(line) for line in Path(result["details_path"]).read_text().splitlines()]
+    records.sort(key=lambda record: (record["side"], record["staging_row_number"]))
+    assert len(records) == len(staged["sas"]) + len(staged["python"])
+    assert (result["matched"], result["sas_only"], result["python_only"]) == (
+        len(staged["sas"]) - len(excess_ordinals["sas"]),
+        len(excess_ordinals["sas"]),
+        len(excess_ordinals["python"]),
     )
+    for record in records:
+        side = record["side"]
+        ordinal = record["staging_row_number"]
+        row = staged[side][ordinal]
+        side_columns = left["columns"] if side == "sas" else right["columns"]
+        for name in union:
+            if name not in side_columns:
+                expected_cell: object = {"type": "absent_column"}
+            else:
+                envelope = row[f"v_{name}"]
+                expected_cell = json.loads(envelope) if envelope is not None else None
+            assert record["values"][name] == expected_cell, (side, ordinal, name)
+        if ordinal in excess_ordinals[side]:
+            diffs, pair_id = annotation[(side, ordinal)]
+            assert record["status"] == "FAIL"
+            assert record["reason"] == f"only_{side}"
+            assert record["differing_columns"] == diffs, (side, ordinal)
+            assert record["pair_id"] == pair_id, (side, ordinal)
+        else:
+            assert record["status"] == "PASS"
+            assert record["reason"] is None
+            assert "differing_columns" not in record
+            assert "pair_id" not in record
 
 
-def test_adversarial_stage_matches_golden(tmp_path: Path) -> None:
+def test_identical_sides_pass_with_plain_records(tmp_path: Path) -> None:
     import adversarial
 
-    golden = _load_golden("adversarial_stage.json.gz")
-    cases = {
-        "base_default": ("a", None),
-        "base_round2": ("a", 2),
-        "perturbed_default": ("b", None),
-        "empty_default": ("empty", None),
-    }
-    for case, (variant, round_digits) in cases.items():
-        source = tmp_path / f"{variant}.parquet"
-        adversarial.write_adversarial(source, variant)
-        grid = adversarial.stage_grid(source, tmp_path / f"work-{case}", round_digits=round_digits)
-        assert grid == golden["cases"][case], case
+    source = tmp_path / "same.parquet"
+    adversarial.write_adversarial(source, "a")
+    for part in ("l", "r", "cmp"):
+        (tmp_path / part).mkdir(parents=True, exist_ok=True)
+    left = stage(source, "python", tmp_path / "l")
+    right = stage(source, "python", tmp_path / "r")
+    result = compare(left, right, tmp_path / "cmp", "1GB", "10GB", "refident")
+    assert result["status"] == "PASS"
+    assert result["matched"] == adversarial.ROW_COUNT
+    records = [json.loads(line) for line in Path(result["details_path"]).read_text().splitlines()]
+    assert len(records) == 2 * adversarial.ROW_COUNT
+    assert all(record["status"] == "PASS" for record in records)
+    assert all("differing_columns" not in record for record in records)
+    assert all("pair_id" not in record for record in records)
 
 
-def test_detail_jsonl_matches_golden(tmp_path: Path) -> None:
+def test_staging_is_batch_size_independent(tmp_path: Path) -> None:
     import adversarial
 
-    golden = _load_golden("adversarial_details.json.gz")
-    left = tmp_path / "left.parquet"
-    adversarial.write_adversarial(left, "a")
-    right = tmp_path / "right.parquet"
-    adversarial.write_adversarial(right, "b")
-    disjoint = tmp_path / "disjoint.parquet"
-    adversarial.write_disjoint(disjoint)
-    captures = {
-        "shared": adversarial.comparison_capture(left, right, "goldenadv", tmp_path / "shared"),
-        "absent": adversarial.comparison_capture(
-            left, disjoint, "goldenabsent", tmp_path / "absent"
-        ),
-    }
-    for case, capture in captures.items():
-        expected = golden[case]
-        assert capture["result"] == expected["result"], case
-        assert len(capture["records"]) == len(expected["records"])
-        assert capture["records"] == expected["records"], case
+    source = tmp_path / "a.parquet"
+    adversarial.write_adversarial(source, "a")
+    whole = adversarial.stage_grid(source, tmp_path / "whole")
+    sliced = adversarial.stage_grid(source, tmp_path / "sliced", batch_size=7)
+    assert sliced == whole
 
 
 def test_summary_detail_reconciliation(tmp_path: Path) -> None:
@@ -1643,6 +1742,7 @@ def test_row_conservation_invariant_is_enforced(
     dataset = summary["datasets"][0]
     assert dataset["status"] == "ERROR"
     assert dataset["reason"] == "RuntimeError"
+    assert "conservation" in dataset["error_message"]
     assert dataset["detail_complete"] is False
     assert dataset["id"] not in summary["detail_links"]
 

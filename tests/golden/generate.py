@@ -1,20 +1,21 @@
-"""Regenerate the golden parity captures in tests/golden.
+"""Regenerate golden parity captures under .tmp/golden (never committed).
 
 Run only with the implementation whose behavior should become the parity
-definition (the pre-refactor code froze these files):
+definition; the output files are a local development reference for diffing
+refactors (generated test data stays out of the repository).  The committed,
+permanent gate is the builder-vs-scalar property tests plus the
+independent-reference detail tests.
 
     .venv/bin/python tests/golden/generate.py
 
-The committed captures hold repo-owned synthetic data only.  Pass --dev to
-additionally write fixture-derived captures (productsales, datetime,
-dates_null staging grids and a full productsales detail stream) under
-.tmp/golden-dev; those carry fixture data and are never committed.
+Pass --dev to additionally capture fixture-derived data (productsales,
+datetime, dates_null staging grids and a full productsales detail stream);
+those carry fixture data and stay out of the repository too.
 """
 
 from __future__ import annotations
 
 import argparse
-import gzip
 import json
 import shutil
 import sys
@@ -31,14 +32,13 @@ import polars_readstat  # noqa: E402
 from sentinel_parity.config import RunConfig  # noqa: E402
 from sentinel_parity.runner import run  # noqa: E402
 
-GOLDEN = Path(__file__).resolve().parent
+GOLDEN = TESTS.parent / ".tmp" / "golden"
 FIXTURES = TESTS.parent / ".parity-fixtures"
 
 
-def _write_gzip_json(path: Path, payload: object) -> None:
-    path.write_bytes(
-        gzip.compress(json.dumps(payload, ensure_ascii=False, indent=1).encode("utf-8"))
-    )
+def _write_json(path: Path, payload: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"wrote {path} ({path.stat().st_size} bytes)")
 
 
@@ -54,10 +54,11 @@ def _golden_captures(work: Path) -> None:
     cases = {
         "base_default": adversarial.stage_grid(paths["a"], work / "grid-a"),
         "base_round2": adversarial.stage_grid(paths["a"], work / "grid-a-r2", round_digits=2),
+        "base_multibatch": adversarial.stage_grid(paths["a"], work / "grid-a-multi", batch_size=7),
         "perturbed_default": adversarial.stage_grid(paths["b"], work / "grid-b"),
         "empty_default": adversarial.stage_grid(empty_path, work / "grid-empty"),
     }
-    _write_gzip_json(GOLDEN / "adversarial_stage.json.gz", {"version": 1, "cases": cases})
+    _write_json(GOLDEN / "adversarial_stage.json", {"version": 1, "cases": cases})
 
     captures = {
         "shared": adversarial.comparison_capture(
@@ -66,8 +67,11 @@ def _golden_captures(work: Path) -> None:
         "absent": adversarial.comparison_capture(
             paths["a"], disjoint_path, "goldenabsent", work / "cmp-absent"
         ),
+        "identical": adversarial.comparison_capture(
+            paths["a"], paths["a"], "goldenident", work / "cmp-identical"
+        ),
     }
-    _write_gzip_json(GOLDEN / "adversarial_details.json.gz", {"version": 1, **captures})
+    _write_json(GOLDEN / "adversarial_details.json", {"version": 1, **captures})
 
 
 def _dev_captures(work: Path) -> None:
@@ -84,7 +88,7 @@ def _dev_captures(work: Path) -> None:
         grids[name] = adversarial.stage_grid(
             sas, work / f"dev-{name}", kind="sas", round_digits=round_digits
         )
-    _write_gzip_json(destination / "fixture_stage.json.gz", {"version": 1, "cases": grids})
+    _write_json(destination / "fixture_stage.json", {"version": 1, "cases": grids})
 
     sas_root, python_root = work / "dev-sas", work / "dev-python"
     for root in (sas_root, python_root):
@@ -99,8 +103,8 @@ def _dev_captures(work: Path) -> None:
     summary = json.loads((output / "summary.json").read_text())
     dataset = summary["datasets"][0]
     detail = output / summary["detail_links"][dataset["id"]]
-    path = destination / "productsales_details.jsonl.gz"
-    path.write_bytes(gzip.compress(detail.read_bytes()))
+    path = destination / "productsales_details.jsonl"
+    path.write_text(detail.read_text(encoding="utf-8"), encoding="utf-8")
     print(f"wrote {path} ({path.stat().st_size} bytes, {dataset['matched_pairs']} matched pairs)")
 
 
