@@ -62,12 +62,7 @@ def _string_payloads(series: pl.Series) -> tuple[pl.Series, pl.Series]:
 def _payloads(
     series: pl.Series, keys: pl.Series, round_digits: int | None
 ) -> tuple[pl.Series, pl.Series]:
-    """Vector envelope JSON strings, or the scalar path for rare shapes.
-
-    Mirrors the vector_keys dispatch: unsigned widths, Decimal, binary, and
-    floats under round_digits encode scalar-only; escaped strings mark
-    individual rows residual.
-    """
+    """Return envelope JSON strings and a mask of rows requiring scalar encoding."""
     dtype = series.dtype
     name = series.name
     if dtype == pl.Boolean:
@@ -128,8 +123,7 @@ def _payloads(
         return payloads, _no_residual(len(series))
     if dtype == pl.String:
         return _string_payloads(series)
-    # Scalar-only dtype: every row rides _encode_scalar, whose null payload
-    # is the literal "null" string.
+    # Include null rows: _encode_scalar supplies their literal "null" payload.
     return (
         pl.Series(name, [None] * len(series), dtype=pl.Utf8),
         pl.repeat(True, len(series), dtype=pl.Boolean, eager=True),
@@ -141,13 +135,10 @@ def _no_residual(length: int) -> pl.Series:
 
 
 def _temporal_encode(series: pl.Series) -> tuple[pl.Series, pl.Series]:
-    """Keys and envelope payloads for Date/Datetime columns; no fallbacks.
+    """Encode temporals without precision loss or scalar fallback.
 
-    Envelope values format from the column's own precision (nanosecond
-    fraction padded to nine digits, aware instants converted to UTC), so
-    even sub-1970 or year-9999 values stay exact.  Beyond year 9999 chrono
-    renders its expanded-year form (leading +, six-digit year); the old
-    scalar path raised there instead.
+    Payloads use nine fractional digits and UTC for aware instants. Beyond
+    year 9999, chrono uses expanded years (leading +, six digits).
     """
     keys = canonical_keys(series, None)
     dtype = series.dtype
@@ -280,8 +271,7 @@ def stage(
         for normal_name in ordered:
             series = batch_frame.get_column(by_normal[normal_name]).rename(normal_name)
             keys, payloads = _encode_column(series, round_digits)
-            # Polars renders Utf8 as large_string; the declared schema keeps
-            # the physical type string, so the cast here is explicit.
+            # Polars emits large_string; the staging schema requires string.
             arrays.append(keys.to_arrow().cast(pa.string()))
             arrays.append(payloads.to_arrow().cast(pa.string()))
             fields.extend(

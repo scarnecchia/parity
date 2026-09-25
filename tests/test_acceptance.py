@@ -1287,12 +1287,9 @@ def test_duckdb_json_record_export_contract(tmp_path: Path) -> None:
 
 
 def test_detail_records_match_staged_values(tmp_path: Path) -> None:
-    """Independent oracle: detail records rebuilt from staged k_/v_ values.
+    """Check pairing against a Counter multiset diff of staged canonical keys.
 
-    Replaces frozen golden capture files (generated test data stays out of
-    the repository): expected pairing comes from a Counter multiset diff
-    over the staged canonical keys, and every emitted cell must equal the
-    staged envelope verbatim.
+    Every emitted cell must equal its staged envelope verbatim.
     """
     import adversarial
     import pyarrow.parquet as pq

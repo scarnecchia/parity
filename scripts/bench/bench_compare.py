@@ -53,7 +53,7 @@ log(
     f"side_b={(WORK / 'side_b.parquet').stat().st_size / 1e6:.0f}MB"
 )
 
-log("stage(side_a) — raw sink + per-cell Python encode")
+log("stage(side_a) — raw sink + vectorized encode with scalar fallbacks")
 started = time.perf_counter()
 side_a = stage(WORK / "side_a.parquet", "python", WORK)
 log(f"stage a: {time.perf_counter() - started:.1f}s rows={side_a['rows']}")

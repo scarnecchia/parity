@@ -34,8 +34,7 @@ def vector_keys(values: pl.Series, round_digits: int | None) -> tuple[pl.Series,
     dtype has no exact builder and the whole column takes the scalar path.
     """
     if round_digits is not None and round_digits < 1:
-        # The integer fast paths are only round-invariant for positive digit
-        # counts; RunConfig rejects anything else at the CLI boundary.
+        # Integer fast paths require positive digits to remain round-invariant.
         raise ValueError("round_digits must be a positive integer")
     dtype = values.dtype
     if dtype == pl.Boolean or dtype in _SIGNED_INTS:
@@ -100,15 +99,12 @@ def _integer_keys(values: pl.Series) -> pl.Series:
 def _float_keys(values: pl.Series) -> tuple[pl.Series, pl.Series]:
     name = values.name
     value = pl.col(name)
-    # Infinities, huge magnitudes, and denominators beyond Int128 fall back;
-    # nulls and NaNs stay in-vector as the "null" key.
     probe = value * pl.lit(float(2**_BIGGEST_DEN_EXPONENT))
     overflowing = (value.abs() >= pl.lit(_FLOAT_BOUND)) | ~(probe == probe.floor())
     residual = (value.is_infinite() | (value.is_finite() & overflowing)) & value.is_not_null()
     integral = value.is_not_null() & ~residual
-    # Bisect the smallest k with value * 2**k integral; den tracks 2**k as an
-    # exact power-of-two float.  Scaling a float by a power of two is exact,
-    # so every integrality probe is exact, and k never goes below zero.
+    # Bisect the smallest nonnegative k making value * 2**k integral.
+    # Power-of-two scaling keeps every integrality probe exact.
     frame = values.to_frame().with_columns(
         integral=integral,
         hi=pl.lit(_BIGGEST_DEN_EXPONENT, dtype=pl.Int32),
@@ -193,11 +189,8 @@ def _temporal_keys(values: pl.Series) -> pl.Series:
     )
 
 
-# repr() and Polars agree on the shortest round-trip digits of a float; they
-# differ only in three spellings, fixed by float_repr: positional values in
-# [1e-5, 1e-4) that repr() writes scientifically (always four leading
-# fractional zeros, so the exponent is the constant e-05), single-digit
-# negative exponents repr() zero-pads, and NaN spelled "NaN".
+# Polars and repr() share round-trip digits but differ in exponent padding,
+# NaN casing, and scientific notation for [1e-5, 1e-4) (always e-05).
 _SCIENTIFIC_SMALL = r"^(-?[1-9](?:\.\d+)?)e-([0-9])$"
 _POSITIONAL_SMALL = r"^(-?)0\.0{4}([1-9][0-9]*)$"
 

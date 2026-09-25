@@ -1,13 +1,7 @@
-"""Deterministic adversarial dataset for the staging and detail parity harness.
+"""Deterministic encoder edge cases for staging and detail parity.
 
-Every value class the encoder must survive appears at least once: signed
-zero, subnormals, extreme exponents, integers-as-floats, NaN and infinities,
-Decimal-grammar text ("1_0", "Infinity", "1e999", Unicode digits), blank and
-whitespace text, Unicode text, nulls, binary, decimal128, ns timestamps, and
-tz-aware timestamps.  Variant "b" of the dataset derives from variant "a" by
-a fixed permutation, eight key-changing value tweaks, one dropped row, and
-one duplicated row, so a two-sided comparison exercises occurrence pairing,
-order mismatches, FAIL annotations, and one-sided excess rows deterministically.
+Variant "b" perturbs values, order, and multiplicity to exercise occurrence
+pairing, order mismatches, FAIL annotations, and one-sided excess rows.
 """
 
 from __future__ import annotations

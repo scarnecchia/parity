@@ -376,7 +376,6 @@ def _is_tmpfs(path: Path, entries: list[tuple[str, str]] | None = None) -> bool:
 
 
 def _warn_on_tmpfs_temp(config: RunConfig) -> None:
-    """Log and hint once when the run's temp base spills onto RAM-backed tmpfs."""
     base = config.temp_dir.resolve() if config.temp_dir else Path(tempfile.gettempdir())
     if not _is_tmpfs(base):
         return

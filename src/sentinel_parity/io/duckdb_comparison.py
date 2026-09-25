@@ -181,10 +181,7 @@ def _compare_shared(
     equality += " AND l.occurrence = r.occurrence"
     started = time.monotonic()
     matched, sas_only, python_only = _join_stats(connection, equality)
-    # The occurrence-aligned join yields the per-key multiset difference by
-    # construction; the conservation identity against the staged row totals
-    # is the runtime tripwire for row loss or join fan-out (a row-count
-    # invariant, not a re-derivation of the join itself).
+    # Detect row loss or join fan-out; this does not independently verify key matching.
     if matched + sas_only != left["rows"] or matched + python_only != right["rows"]:
         raise RuntimeError("row counts violate multiset conservation")
     run_log.phase_done(dataset_id, "multiset", started)
@@ -262,9 +259,7 @@ def _compare_shared(
         quote_identifier("p_pair"),
         dataset_ref,
     )
-    # Two statements keep peak memory bounded: the join writes its result to
-    # a disk-backed table first, releasing its hash tables before the record
-    # expressions build wide JSON vectors per chunk.
+    # Materialize first to release join hash tables before building wide JSON vectors.
     connection.execute(
         "CREATE TABLE detail_base AS SELECT "
         + ", ".join(projections)
@@ -304,12 +299,9 @@ def _present_cell(prefix: str, names: set[str]) -> Callable[[str], str | None]:
 
 
 def _values_object(cell: Callable[[str], str | None], union: list[str]) -> str:
-    """json_object call embedding staged v_* envelopes verbatim as JSON.
+    """Embed staged envelopes as JSON, retaining keys for null values.
 
-    `cell` maps a union column to its value expression, or None when the
-    column is absent from this side (then the absent_column envelope is
-    used).  Staged nulls become JSON null because json_object keeps the key
-    with a null value.
+    `cell(name)` returns a value expression or None for an absent_column envelope.
     """
     arguments: list[str] = []
     for name in union:
@@ -332,11 +324,9 @@ def _side_record(
     pair_id: str,
     dataset_ref: str,
 ) -> str:
-    """One JSON record expression per base row of `side`, or JSON NULL.
+    """Return a JSON record expression, or NULL without this side's ordinal.
 
-    Rows without an own ordinal produce nothing; matched rows get the PASS
-    shape without differing_columns/pair_id keys, and one-sided rows get the
-    FAIL shape carrying the annotation columns of the matching side.
+    PASS omits differing_columns/pair_id; FAIL includes this side's annotations.
     """
     passed = (
         "json_object('schema_version', 1, 'dataset_id', "
@@ -388,11 +378,9 @@ def _unsupported(value: str) -> bool:
 
 
 def _join_stats(connection: duckdb.DuckDBPyConnection, equality: str) -> tuple[int, int, int]:
-    """Matched, sas-only, and python-only counts from the occurrence join.
+    """Return (matched, sas-only, python-only) counts.
 
-    For each key the join matches min(occurrences) pairs; left rows beyond the
-    right side's multiplicity stay unmatched, so the unmatched filters equal
-    the EXCEPT ALL cardinalities without recomputing a window.
+    Joining by key and occurrence makes unmatched counts equal EXCEPT ALL counts.
     """
     row = connection.execute(
         "SELECT count(*) FILTER (WHERE l.ordinal IS NOT NULL AND r.ordinal IS NOT NULL), "
@@ -414,9 +402,8 @@ def _absent_side_details(
 ) -> None:
     """Export every row of both sides when no column is shared to compare.
 
-    Unlike the shared-column writer, these FAIL records never carry
-    differing_columns/pair_id keys — there are no excess-row pairs to
-    annotate — and that asymmetry is part of the frozen record contract.
+    Contract: these FAIL records omit differing_columns/pair_id because no
+    excess-row pairs exist.
     """
     dataset_ref = _sql_string(dataset_id)
     selects: list[str] = []
