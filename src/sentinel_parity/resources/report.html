@@ -262,7 +262,7 @@ footer .build { font: 0.75rem/1.6 var(--mono); color: var(--ink-faint); }
   <div class="masthead-row">
     <span class="pill {{ summary.status }}">{{ summary.status }}</span>
     {% set statuses = summary.datasets|map(attribute='status')|list %}
-    <span class="run-meta">{{ statuses|length }} datasets · {{ statuses.count("PASS") }} passed · {{ statuses.count("WARN") }} warned · {{ statuses.count("FAIL") }} failed · {{ statuses.count("ERROR") }} error</span>
+    <span class="run-meta">{{ statuses|length }} datasets · {{ statuses.count("PASS") }} pass · {{ statuses.count("WARN") }} warn · {{ statuses.count("FAIL") }} fail · {{ statuses.count("ERROR") }} error</span>
   </div>
 </header>
 {% if summary.datasets|length > 1 %}
@@ -276,7 +276,7 @@ footer .build { font: 0.75rem/1.6 var(--mono); color: var(--ink-faint); }
   <header>
     <h2>{{ dataset.name }}</h2>
     <span class="pill {{ dataset.status }}">{{ dataset.status }}</span>
-    {% if dataset.reason %}<span class="reason-chip">{{ dataset.reason }}</span>{% endif %}
+    {% if dataset.reason and dataset.status != "ERROR" %}<span class="reason-chip">{{ dataset.reason }}</span>{% endif %}
   </header>
   {% if dataset.row_order_mismatches %}
   <p class="order-flag">Row order differs from the Parquet file — {{ dataset.row_order_mismatches }} matched rows are misplaced</p>
@@ -284,7 +284,9 @@ footer .build { font: 0.75rem/1.6 var(--mono); color: var(--ink-faint); }
   {% if dataset.type_mismatched_columns %}
   <p class="type-note">Character vs numeric columns: {{ dataset.type_mismatched_columns|join(", ") }}</p>
   {% endif %}
-  {% if dataset.status == "FAIL" %}
+  {% if dataset.status == "WARN" %}
+  <p class="story">Differences are limited to those character vs numeric columns, so this dataset passes.</p>
+  {% elif dataset.status == "FAIL" %}
   {% macro column_list(names) -%}
   {%- for name in names -%}<span class="col-name">{{ name }}</span>{% if not loop.last %}, {% endif %}{% endfor %}
   {%- endmacro %}
@@ -311,7 +313,10 @@ footer .build { font: 0.75rem/1.6 var(--mono); color: var(--ink-faint); }
       {%- if dataset.python_only > pairs %}{{ dataset.python_only - pairs }} row{{ "s" if (dataset.python_only - pairs) != 1 }} appear{{ "s" if (dataset.python_only - pairs) == 1 }} only in Parquet.{% endif -%}
     {%- endif %}
   </p>
+  {% elif dataset.status == "ERROR" %}
+  <p class="story">The comparison did not run{% if dataset.get("error_message") %} — {{ dataset["error_message"] }}{% endif %}.</p>
   {% endif %}
+  {% if dataset.status != "ERROR" %}
   {% set stats = [
     ("SAS rows", dataset.sas_rows, false),
     ("Parquet rows", dataset.python_rows, false),
@@ -327,6 +332,7 @@ footer .build { font: 0.75rem/1.6 var(--mono); color: var(--ink-faint); }
     </div>
     {% endfor %}
   </div>
+  {% endif %}
   {% if links.get(dataset.id) %}
   <p class="actions"><a href="{{ links[dataset.id] }}">Row-level details (JSONL)</a></p>
   {% endif %}

@@ -1112,8 +1112,15 @@ def test_corrupt_one_sided_dataset_is_reported_and_continues(tmp_path: Path) -> 
         dataset for dataset in summary["datasets"] if dataset["name"] == "msoc/healthy.sas7bdat"
     )
     assert bad["status"] == "ERROR" and bad["detail_complete"] is False
+    assert bad["error_message"]
+    healthy = next(
+        dataset for dataset in summary["datasets"] if dataset["name"] == "msoc/healthy.sas7bdat"
+    )
     assert healthy["status"] == "FAIL" and healthy["reason"] == "schema_columns_differ"
     assert healthy["id"] in summary["detail_links"]
+    html = (tmp_path / "out" / "index.html").read_text()
+    assert "The comparison did not run" in html
+    assert bad["error_message"] in html
 
 
 def test_report_write_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1570,6 +1577,7 @@ def test_type_crossed_warn_run(tmp_path: Path) -> None:
     assert dataset["type_mismatched_columns"] == ["year"]
     html = (tmp_path / "out" / "index.html").read_text()
     assert "Character vs numeric columns: year" in html
+    assert "this dataset passes" in html
     assert "WARN" in html
 
 
