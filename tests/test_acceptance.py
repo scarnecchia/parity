@@ -1,4 +1,5 @@
 import csv
+import errno
 import hashlib
 import json
 import shutil
@@ -440,6 +441,186 @@ def test_id_writes_reports_into_isolated_subfolders(tmp_path: Path) -> None:
     assert "empty" in rerun.stderr
 
 
+def test_run_log_jsonl_verbose_and_short_options(tmp_path: Path) -> None:
+    sas, python = _roots(tmp_path)
+    source = Path(__file__).resolve().parents[1] / ".parity-fixtures" / "productsales.sas7bdat"
+    shutil.copyfile(source, sas / "dplocal" / "data.sas7bdat")
+    polars_readstat.ScanReadstat(str(sas / "dplocal" / "data.sas7bdat")).df.collect().write_parquet(
+        python / "dplocal" / "data.parquet"
+    )
+    output = tmp_path / "out"
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "-s",
+            str(sas),
+            "-p",
+            str(python),
+            "-o",
+            str(output),
+            "--threads",
+            "5",
+            "--verbose",
+        ],
+    )
+    assert result.exit_code == 0
+    events = [
+        json.loads(line) for line in (output / "run.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    names = {record["event"] for record in events}
+    assert {
+        "run_start",
+        "discovery_done",
+        "dataset_start",
+        "dataset_done",
+        "compare_start",
+        "compare_phase",
+        "publish_start",
+        "publish_done",
+        "run_done",
+    } <= names
+    phases = {record["phase"] for record in events if record["event"] == "compare_phase"}
+    assert phases == {"load_tables", "rank", "multiset", "pairs", "details"}
+    start = next(record for record in events if record["event"] == "run_start")
+    assert start["threads"] == 5
+    allowed_keys = {
+        "run_start": {
+            "ts",
+            "elapsed_s",
+            "event",
+            "sas_root",
+            "python_root",
+            "output_dir",
+            "request_id",
+            "threads",
+            "memory_limit",
+            "max_temp_size",
+            "batch_size",
+            "preview_rows",
+            "round_digits",
+            "temp_dir",
+        },
+        "discovery_done": {
+            "ts",
+            "elapsed_s",
+            "event",
+            "sas_files",
+            "python_files",
+            "matched",
+            "sas_only",
+            "python_only",
+        },
+        "dataset_start": {"ts", "elapsed_s", "event", "dataset", "name"},
+        "dataset_done": {
+            "ts",
+            "elapsed_s",
+            "event",
+            "dataset",
+            "name",
+            "status",
+            "reason",
+            "matched",
+            "sas_only",
+            "python_only",
+            "order_mismatches",
+            "duration_s",
+        },
+        "compare_start": {
+            "ts",
+            "elapsed_s",
+            "event",
+            "dataset",
+            "sas_rows",
+            "python_rows",
+            "threads",
+            "memory_limit",
+            "max_temp_size",
+        },
+        "compare_phase": {"ts", "elapsed_s", "event", "dataset", "phase", "duration_s"},
+        "publish_start": {"ts", "elapsed_s", "event", "datasets", "details"},
+        "publish_done": {"ts", "elapsed_s", "event", "report"},
+        "run_done": {"ts", "elapsed_s", "event", "status", "datasets"},
+    }
+    for record in events:
+        assert set(record) == allowed_keys[record["event"]]
+    summary = json.loads((output / "summary.json").read_text())
+    assert summary["limits"]["threads"] == 5
+    assert '"run_start"' in result.stderr
+    assert '"run_done"' in result.stderr
+
+
+def test_config_error_drains_jsonl_to_stderr(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        ["run", "-s", str(tmp_path / "missing"), "-p", str(tmp_path / "also-missing")],
+    )
+    assert result.exit_code == 2
+    assert '"run_start"' in result.stderr
+
+
+def test_verbose_failure_echoes_each_event_once(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        ["run", "-s", str(tmp_path / "missing"), "-p", str(tmp_path / "also"), "--verbose"],
+    )
+    assert result.exit_code == 2
+    assert result.stderr.count('"run_start"') == 1
+
+
+def test_threads_validation(tmp_path: Path) -> None:
+    config = tmp_path / "bad.toml"
+    config.write_text('sas_root="x"\npython_root="y"\nthreads=0\n')
+    with pytest.raises(ValueError, match="threads must be a positive integer"):
+        load_config(config, {})
+    config.write_text('sas_root="x"\npython_root="y"\nthreads="5"\n')
+    with pytest.raises(ValueError, match="threads must be an integer"):
+        load_config(config, {})
+    sas, python = _roots(tmp_path)
+    result = runner.invoke(app, ["run", "-s", str(sas), "-p", str(python), "--threads", "0"])
+    assert result.exit_code == 2
+    assert "threads must be a positive integer" in result.stderr
+
+
+def test_underscore_aliases_are_rejected(tmp_path: Path) -> None:
+    sas, python = _roots(tmp_path)
+    result = runner.invoke(app, ["run", "--sas_root", str(sas), "--python_root", str(python)])
+    assert result.exit_code == 2
+
+
+def test_oserror_console_and_log_show_errno(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sas, python = _roots(tmp_path)
+    source = Path(__file__).resolve().parents[1] / ".parity-fixtures" / "productsales.sas7bdat"
+    shutil.copyfile(source, sas / "dplocal" / "data.sas7bdat")
+    polars_readstat.ScanReadstat(str(sas / "dplocal" / "data.sas7bdat")).df.collect().write_parquet(
+        python / "dplocal" / "data.parquet"
+    )
+    out = tmp_path / "out"
+    import sentinel_parity.io.report_writer as report_writer
+
+    original_atomic_text = report_writer._atomic_text
+
+    def fail_html_write(path: Path, text: str) -> None:
+        if path.name == "index.html":
+            raise OSError(errno.ENOSPC, "No space left on device")
+        original_atomic_text(path, text)
+
+    monkeypatch.setattr(report_writer, "_atomic_text", fail_html_write)
+    result = runner.invoke(app, ["run", "-s", str(sas), "-p", str(python), "-o", str(out)])
+    assert result.exit_code == 2
+    assert "errno 28" in result.stderr
+    assert "No space left on device" in result.stderr
+    log = (out / "run.jsonl").read_text(encoding="utf-8")
+    assert '"errno": 28' in log
+    assert '"publish_error"' in log
+    rerun = runner.invoke(app, ["run", "-s", str(sas), "-p", str(python), "-o", str(out)])
+    assert rerun.exit_code == 2
+    assert "empty" in rerun.stderr
+    assert (out / "run.jsonl").read_text(encoding="utf-8") == log
+
+
 def test_invalid_config(tmp_path: Path) -> None:
     config = tmp_path / "bad.toml"
     config.write_text('sas_root="x"\npython_root="y"\nunknown=1\n')
@@ -555,7 +736,7 @@ def test_installed_wheel_cli(tmp_path: Path) -> None:
     )
     assert install.returncode == 0, install.stderr
     env = {**__import__("os").environ, "PYTHONPATH": str(target)}
-    for args, expected in ((["--help"], "run"), (["run", "--help"], "--sas_root")):
+    for args, expected in ((["--help"], "run"), (["run", "--help"], "--sas-root")):
         result = subprocess.run(
             [sys.executable, "-m", "sentinel_parity.cli", *args],
             cwd=tmp_path,
@@ -1139,6 +1320,9 @@ def test_exit_code_precedence(tmp_path: Path, capsys: pytest.CaptureFixture[str]
     output = captured.out + captured.err + cli_result.stdout + cli_result.stderr
     assert "secret" not in output
     assert "sensitive-cell-sentinel" not in output
+    run_log_text = (tmp_path / "out" / "run.jsonl").read_text(encoding="utf-8")
+    assert '"dataset_error"' in run_log_text
+    assert "sensitive-cell-sentinel" not in run_log_text
     summary = json.loads((tmp_path / "out" / "summary.json").read_text())
     sentinel_dataset = next(
         dataset

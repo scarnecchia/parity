@@ -21,10 +21,10 @@ The distribution is named `sentinel-parity`; the console command is `parity`.
 Provide both input roots directly:
 
 ```sh
-parity run --sas_root /data/sas --python_root /data/parquet
+parity run --sas-root /data/sas --python-root /data/parquet
 ```
 
-`--sas-root` and `--python-root` are equivalent hyphenated aliases. Each root must contain `dplocal/` and `msoc/` directories.
+`-s` and `-p` are short forms of `--sas-root` and `--python-root`; `-o` shortens `--output-dir`. Each root must contain `dplocal/` and `msoc/` directories.
 
 Or copy [config.toml.example](config.toml.example) to `config.toml`, edit its paths, and run:
 
@@ -45,15 +45,17 @@ Open `parity-report/index.html` directly in a browser. The HTML report has no ne
 | CLI option | TOML key | Type and meaning | Default |
 | --- | --- | --- | --- |
 | `--config` | None | Path to an explicit TOML configuration file | Unset; no config file loaded |
-| `--sas-root`, `--sas_root` | `sas_root` | String path to the SAS output root | Required; no default |
-| `--python-root`, `--python_root` | `python_root` | String path to the Parquet output root | Required; no default |
-| `--output-dir` | `output_dir` | String path to the report directory | `./parity-report` |
+| `--sas-root`, `-s` | `sas_root` | String path to the SAS output root | Required; no default |
+| `--python-root`, `-p` | `python_root` | String path to the Parquet output root | Required; no default |
+| `--output-dir`, `-o` | `output_dir` | String path to the report directory | `./parity-report` |
 | `--id` | `id` | Nonempty string of letters, numbers, and underscores, at most 64 characters; the reserved report name `details` is rejected; writes the report into an `<id>` subfolder of the report directory | Unset; report goes directly to the report directory |
 | `--memory-limit` | `memory_limit` | Nonempty DuckDB memory-limit string, such as `"1GB"` or `"512MB"` | `"1GB"` |
 | `--temp-dir` | `temp_dir` | String path to an existing base directory for the run's private temporary directory | Unset; Python's system temporary-directory selection, including `TMPDIR` |
 | `--max-temp-size` | `max_temp_size` | Nonempty DuckDB maximum temporary-directory-size string, such as `"10GB"` | `"10GB"` |
 | `--preview-rows` | `preview_rows` | Nonnegative integer: maximum mismatch preview rows per side per dataset in HTML; `0` hides preview rows | `100` |
 | `--round` | `round_digits` | Nonnegative integer: round all numeric values — including coerced numeric text — to N digits after the decimal point (nearest, ties away from zero) before comparison | Omitted; raw values compare |
+| `--threads` | `threads` | Positive integer: DuckDB worker threads for comparison | `4` |
+| `--verbose` | None | Flag: echo structured run-log events to stderr as they happen | Not set |
 | `--help` | None | Flag: show help and exit (`parity --help` or `parity run --help`) | Not set |
 
 CLI values override TOML values **per key**. Required roots may come from either source. TOML keys are top-level; unknown keys are rejected.
@@ -91,11 +93,14 @@ A completed comparison reports `WARN` instead of `FAIL` when every unmatched occ
 parity-report/
   index.html
   summary.json
+  run.jsonl
   details/
     <id>.jsonl
 ```
 
 With `id` set, these files are written into `parity-report/<id>/` so one report directory can hold several runs side by side.
+
+`run.jsonl` is the structured run log: one JSON object per event with counts, durations, paths, and per-phase comparison timings; failures record the exception class and, for `OSError`, the errno and strerror. It never contains cell values, preview rows, or raw exception text. `--verbose` echoes the same lines to stderr as they happen, and a run that fails before the report directory exists drains its buffered events to stderr. A failed run deliberately keeps `run.jsonl`, so the report directory is then not empty: rerunning into it requires deleting the directory — including the log — by hand. The tool never removes the log; it is the forensic record of the failure.
 
 `index.html` contains dataset summaries and a **mismatch-only, bounded preview**, with links to the complete JSONL details. The preview limit applies separately to each side of each dataset; truncation counts show how much was omitted. Passing rows are in JSONL, not the mismatch preview.
 

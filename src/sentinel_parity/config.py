@@ -11,6 +11,7 @@ DETAIL_DIR_NAME = "details"
 _ID_PATTERN = re.compile(r"[A-Za-z0-9_]+")
 _RESERVED_IDS = frozenset({DETAIL_DIR_NAME.casefold()})
 _ID_MAX_LENGTH = 64
+DEFAULT_THREADS = 4
 
 
 @dataclass(frozen=True)
@@ -25,6 +26,7 @@ class RunConfig:
     batch_size: int = 65536
     round_digits: int | None = None
     id: str | None = None
+    threads: int = DEFAULT_THREADS
 
     def __post_init__(self) -> None:
         if self.preview_rows < 0 or self.batch_size <= 0:
@@ -35,6 +37,8 @@ class RunConfig:
             raise ValueError("round_digits must be a positive integer")
         if not self.memory_limit or not self.max_temp_size:
             raise ValueError("memory_limit and max_temp_size must be nonempty")
+        if not isinstance(self.threads, int) or isinstance(self.threads, bool) or self.threads < 1:
+            raise ValueError("threads must be a positive integer")
         if self.id is not None:
             if not isinstance(self.id, str):
                 raise ValueError("id must be a string")

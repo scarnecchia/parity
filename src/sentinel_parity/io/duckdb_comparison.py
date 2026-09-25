@@ -10,13 +10,16 @@ than stopping at the first problem.
 from __future__ import annotations
 
 import json
+import time
 import uuid
 from typing import TYPE_CHECKING, Any
 
 import duckdb
 import pyarrow.parquet as pq
 
+from sentinel_parity.config import DEFAULT_THREADS
 from sentinel_parity.core.comparison_sql import quote_identifier
+from sentinel_parity.io import run_log
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -29,11 +32,22 @@ def compare(
     memory_limit: str,
     max_temp_size: str,
     dataset_id: str,
+    *,
+    threads: int = DEFAULT_THREADS,
 ) -> dict[str, Any]:
     work.mkdir(parents=True, exist_ok=True)
     artifact_id = uuid.uuid4().hex
     spill = work / f"spill-{artifact_id}"
     spill.mkdir()
+    run_log.event(
+        "compare_start",
+        dataset=dataset_id,
+        sas_rows=left["rows"],
+        python_rows=right["rows"],
+        threads=threads,
+        memory_limit=memory_limit,
+        max_temp_size=max_temp_size,
+    )
     connection = duckdb.connect(
         str(work / f"compare-{artifact_id}.duckdb"),
         config={
@@ -41,14 +55,16 @@ def compare(
             "max_temp_directory_size": max_temp_size,
             "temp_directory": str(spill),
             "preserve_insertion_order": "false",
-            "threads": "4",
+            "threads": str(threads),
         },
     )
     try:
+        started = time.monotonic()
         for side, item in (("sas", left), ("python", right)):
             connection.execute(
                 f"CREATE TABLE {side} AS SELECT * FROM read_parquet(?)", [str(item["path"])]
             )
+        run_log.phase_done(dataset_id, "load_tables", started)
         left_columns, right_columns = list(left["columns"]), list(right["columns"])
         for item in (left, right):
             for dtype in item["types"].values():
@@ -148,15 +164,18 @@ def _compare_shared(
     """Compare both sides on the shared columns and stream row details."""
     keycols = [f"k_{name}" for name in shared]
     keys = ", ".join(quote_identifier(name) for name in keycols)
+    started = time.monotonic()
     for side in ("sas", "python"):
         connection.execute(
             f"CREATE TABLE {side}_ranked AS SELECT *, row_number() OVER "
             f"(PARTITION BY {keys} ORDER BY ordinal) AS occurrence FROM {side}"
         )
+    run_log.phase_done(dataset_id, "rank", started)
     equality = " AND ".join(
         f"l.{quote_identifier(k)} IS NOT DISTINCT FROM r.{quote_identifier(k)}" for k in keycols
     )
     equality += " AND l.occurrence = r.occurrence"
+    started = time.monotonic()
     left_except = _except_count(connection, "sas", "python", keycols)
     right_except = _except_count(connection, "python", "sas", keycols)
     stats = connection.execute(
@@ -168,6 +187,8 @@ def _compare_shared(
     matched, sas_only, python_only = (int(value or 0) for value in (stats or (0, 0, 0)))
     if (left_except, right_except) != (sas_only, python_only):
         raise RuntimeError("independent multiset counts disagree")
+    run_log.phase_done(dataset_id, "multiset", started)
+    started = time.monotonic()
     for side in ("sas", "python"):
         connection.execute(
             f"CREATE TABLE {side}_counts AS SELECT {keys}, count(*) AS n "
@@ -203,6 +224,8 @@ def _compare_shared(
             payload.append((s_ord, p_ord, rank, json.dumps(diffs)))
     if payload:
         connection.executemany("INSERT INTO annotations VALUES (?, ?, ?, ?)", payload)
+    run_log.phase_done(dataset_id, "pairs", started)
+    started = time.monotonic()
     order_row = connection.execute(
         "SELECT count(*) FROM sas_ranked l JOIN python_ranked r ON "
         f"{equality} WHERE l.ordinal != r.ordinal"
@@ -269,6 +292,7 @@ def _compare_shared(
                             )
                             + "\n"
                         )
+    run_log.phase_done(dataset_id, "details", started)
     return matched, sas_only, python_only, order_mismatches
 
 

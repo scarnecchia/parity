@@ -7,7 +7,9 @@ import json
 import os
 import shutil
 import tempfile
+import time
 import uuid
+from contextlib import suppress
 from datetime import UTC, datetime
 from importlib.metadata import version
 from pathlib import Path
@@ -18,6 +20,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from sentinel_parity.core.discovery import FileEntry, pair_files
+from sentinel_parity.io import run_log
 from sentinel_parity.io.discovery import discover, validate_roots_and_output
 from sentinel_parity.io.duckdb_comparison import _unsupported, compare
 from sentinel_parity.io.report_writer import publish
@@ -28,7 +31,31 @@ if TYPE_CHECKING:
     from sentinel_parity.config import RunConfig
 
 
-def run(config: RunConfig) -> int:
+def run(config: RunConfig, *, verbose: bool = False) -> int:
+    """Run safe dataset discovery, staged comparison, and report publication."""
+    run_log.start()
+    run_log.set_verbose(verbose)
+    try:
+        return _execute(config)
+    finally:
+        run_log.close()
+
+
+def _execute(config: RunConfig) -> int:
+    run_log.event(
+        "run_start",
+        sas_root=str(config.sas_root),
+        python_root=str(config.python_root),
+        output_dir=str(config.effective_output_dir),
+        request_id=config.id,
+        threads=config.threads,
+        memory_limit=config.memory_limit,
+        max_temp_size=config.max_temp_size,
+        batch_size=config.batch_size,
+        preview_rows=config.preview_rows,
+        round_digits=config.round_digits,
+        temp_dir=str(config.temp_dir) if config.temp_dir else None,
+    )
     validate_roots_and_output(config)
     for root in (config.sas_root, config.python_root):
         if not root.is_dir() or not os.access(root, os.R_OK):
@@ -36,10 +63,19 @@ def run(config: RunConfig) -> int:
     sas_files = discover(config.sas_root, ".sas7bdat")
     python_files = discover(config.python_root, ".parquet")
     pairing = pair_files(sas_files, python_files)
+    run_log.event(
+        "discovery_done",
+        sas_files=len(sas_files),
+        python_files=len(python_files),
+        matched=len(pairing.matched),
+        sas_only=len(pairing.sas_only),
+        python_only=len(pairing.python_only),
+    )
     if not pairing.matched:
         raise ValueError("no matched dataset pairs found")
     output = config.effective_output_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)
+    run_log.attach(output / "run.jsonl")
     parent = config.temp_dir.resolve() if config.temp_dir else None
     run_temp = Path(tempfile.mkdtemp(prefix="sentinel-parity-", dir=parent))
     datasets: list[dict[str, Any]] = []
@@ -53,6 +89,9 @@ def run(config: RunConfig) -> int:
         for entry in pairing.sas_only:
             ident = uuid.uuid4().hex
             detail = run_temp / f"{ident}.jsonl"
+            name = f"{entry.directory}/{entry.filename}"
+            run_log.event("dataset_start", dataset=ident, name=name)
+            started = time.monotonic()
             try:
                 staged_sas = stage_sas_input(Path(entry.path), run_temp)
                 rows = _row_count(str(staged_sas), "sas")
@@ -89,12 +128,26 @@ def run(config: RunConfig) -> int:
                         "metadata": metadata,
                     }
                 )
+                run_log.event(
+                    "dataset_done",
+                    dataset=ident,
+                    name=name,
+                    status="FAIL",
+                    reason="missing_counterpart",
+                    sas_rows=rows,
+                    python_rows=0,
+                    duration_s=round(time.monotonic() - started, 3),
+                )
             except Exception as exc:
                 fatal = True
+                run_log.error("dataset_error", exc, dataset=ident, name=name)
                 datasets.append(_one_sided_error(ident, entry, exc))
         for entry in pairing.python_only:
             ident = uuid.uuid4().hex
             detail = run_temp / f"{ident}.jsonl"
+            name = f"{entry.directory}/{entry.filename}"
+            run_log.event("dataset_start", dataset=ident, name=name)
+            started = time.monotonic()
             try:
                 rows = _row_count(entry.path, "python")
                 metadata = _metadata(entry.path, "python")
@@ -129,13 +182,27 @@ def run(config: RunConfig) -> int:
                         "metadata": metadata,
                     }
                 )
+                run_log.event(
+                    "dataset_done",
+                    dataset=ident,
+                    name=name,
+                    status="FAIL",
+                    reason="missing_counterpart",
+                    sas_rows=0,
+                    python_rows=rows,
+                    duration_s=round(time.monotonic() - started, 3),
+                )
             except Exception as exc:
                 fatal = True
+                run_log.error("dataset_error", exc, dataset=ident, name=name)
                 datasets.append(_one_sided_error(ident, entry, exc))
         for sas, python in pairing.matched:
             ident = uuid.uuid4().hex
             dataset_work = run_temp / f"dataset-{ident}"
             dataset_work.mkdir()
+            name = f"{sas.directory}/{sas.filename}"
+            run_log.event("dataset_start", dataset=ident, name=name)
+            started = time.monotonic()
             try:
                 sas_stage = stage(
                     Path(sas.path), "sas", dataset_work, config.batch_size, config.round_digits
@@ -154,6 +221,7 @@ def run(config: RunConfig) -> int:
                     config.memory_limit,
                     config.max_temp_size,
                     ident,
+                    threads=config.threads,
                 )
                 details[ident] = Path(result["details_path"])
                 any_fail |= result["status"] == "FAIL"
@@ -204,8 +272,21 @@ def run(config: RunConfig) -> int:
                 )
                 previews[ident] = preview_records
                 preview_truncation[ident] = truncation
+                run_log.event(
+                    "dataset_done",
+                    dataset=ident,
+                    name=name,
+                    status=result["status"],
+                    reason=result["reason"],
+                    matched=result["matched"],
+                    sas_only=result["sas_only"],
+                    python_only=result["python_only"],
+                    order_mismatches=result["order_mismatches"],
+                    duration_s=round(time.monotonic() - started, 3),
+                )
             except Exception as exc:
                 fatal = True
+                run_log.error("dataset_error", exc, dataset=ident, name=name)
                 datasets.append(
                     {
                         "id": ident,
@@ -241,12 +322,21 @@ def run(config: RunConfig) -> int:
                 "batch_size": config.batch_size,
                 "preview_rows": config.preview_rows,
                 "round_digits": config.round_digits,
+                "threads": config.threads,
             },
             "datasets": datasets,
             "preview_truncation": preview_truncation,
         }
-        publish(output, summary, details, previews, preview_truncation)
+        run_log.event("publish_start", datasets=len(datasets), details=len(details))
+        try:
+            publish(output, summary, details, previews, preview_truncation)
+        except BaseException as exc:
+            with suppress(Exception):
+                run_log.error("publish_error", exc)
+            raise
+        run_log.event("publish_done", report=str(output / "index.html"))
         print(f"{status}: {len(datasets)} datasets; report {output / 'index.html'}")
+        run_log.event("run_done", status=status, datasets=len(datasets))
         return 2 if fatal else 1 if any_fail else 0
     finally:
         shutil.rmtree(run_temp, ignore_errors=True)
