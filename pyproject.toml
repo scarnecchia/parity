@@ -7,7 +7,7 @@ name = "sentinel-parity"
 version = "0.5.0"
 description = "Exact, duplicate-aware SAS7BDAT to Parquet comparison reports"
 readme = "README.md"
-requires-python = ">=3.12.13"
+requires-python = ">=3.11"
 dependencies = [
   "typer>=0.15,<1",
   "polars-readstat==0.21.1",
@@ -34,7 +34,7 @@ where = ["src"]
 sentinel_parity = ["resources/*.html"]
 
 [tool.ruff]
-target-version = "py312"
+target-version = "py311"
 line-length = 100
 
 [tool.ruff.lint]
