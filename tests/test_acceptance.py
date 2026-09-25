@@ -746,17 +746,27 @@ def test_all_rows_fail_for_schema_or_missing_file(tmp_path: Path) -> None:
     assert run(RunConfig(sas, python, tmp_path / "schema-out")) == 1
     schema_html = (tmp_path / "schema-out" / "index.html").read_text()
     assert "Parquet has 1 column SAS lacks" in schema_html
-    assert "no row can match until the column sets agree" in schema_html
-    assert "<h3>Mismatch preview" not in schema_html
-    dataset, records = parse_details(tmp_path / "schema-out", "schema_columns_differ")
-    assert dataset["reason"] == "schema_columns_differ"
+    assert "those values are not compared" in schema_html
+    assert "Parquet is missing" in schema_html
+    assert "so no row can fully match" in schema_html
+    assert "Mismatch preview" in schema_html
+    dataset, records = parse_details(tmp_path / "schema-out", "sas_only_columns")
+    assert dataset["reason"] == "sas_only_columns"
+    assert dataset["conditions"] == [
+        {
+            "severity": "FAIL",
+            "reason": "sas_only_columns",
+            "columns": sorted(name.casefold() for name in source.columns),
+        },
+        {"severity": "WARN", "reason": "python_only_columns", "columns": ["different"]},
+    ]
     assert dataset["sas_rows"] == source.height and dataset["python_rows"] == 2
     assert dataset["detail_complete"] is True
     assert len(records) == source.height + 2
     expected_names = {name.casefold() for name in source.columns} | {"different"}
     assert {record["side"] for record in records} == {"sas", "python"}
     assert all(record["status"] == "FAIL" for record in records)
-    assert all(record["reason"] == "schema_columns_differ" for record in records)
+    assert {record["reason"] for record in records} == {"only_sas", "only_python"}
     assert all(record["dataset_id"] == dataset["id"] for record in records)
     sas_records = [record for record in records if record["side"] == "sas"]
     python_records = [record for record in records if record["side"] == "python"]
@@ -807,12 +817,14 @@ def test_all_rows_fail_for_schema_or_missing_file(tmp_path: Path) -> None:
         },
     )
     # Declared types differ (numeric vs text), but comparison runs on values:
-    # no row matches, so every row fails as only_sas/only_python, not schema.
+    # no row matches, so every row fails as only_sas/only_python value
+    # mismatches, not schema.
     assert run(RunConfig(sas3, python3, tmp_path / "family-out")) == 1
     summary3 = json.loads((tmp_path / "family-out" / "summary.json").read_text())
     dataset = summary3["datasets"][0]
     assert dataset["status"] == "FAIL"
-    assert dataset["reason"] is None
+    assert dataset["reason"] == "value_mismatch"
+    assert dataset["conditions"] == [{"severity": "FAIL", "reason": "value_mismatch"}]
     assert dataset["sas_rows"] == 1440 and dataset["python_rows"] == 1440
     assert (dataset["matched_pairs"], dataset["sas_only"], dataset["python_only"]) == (
         0,
@@ -1123,7 +1135,7 @@ def test_corrupt_one_sided_dataset_is_reported_and_continues(tmp_path: Path) -> 
     healthy = next(
         dataset for dataset in summary["datasets"] if dataset["name"] == "msoc/healthy.sas7bdat"
     )
-    assert healthy["status"] == "FAIL" and healthy["reason"] == "schema_columns_differ"
+    assert healthy["status"] == "FAIL" and healthy["reason"] == "sas_only_columns"
     assert healthy["id"] in summary["detail_links"]
     html = (tmp_path / "out" / "index.html").read_text()
     assert "The comparison did not run" in html
@@ -1586,6 +1598,93 @@ def test_type_crossed_warn_run(tmp_path: Path) -> None:
     assert 'Character vs numeric columns: <span class="col-name">year</span>' in html
     assert "this dataset passes" in html
     assert "WARN" in html
+
+
+def test_parquet_extra_column_warns_and_shared_rows_still_match(tmp_path: Path) -> None:
+    sas, python = _roots(tmp_path)
+    fixture = Path(__file__).resolve().parents[1] / ".parity-fixtures" / "productsales.sas7bdat"
+    shutil.copyfile(fixture, sas / "dplocal" / "extra.sas7bdat")
+    frame = polars_readstat.ScanReadstat(str(sas / "dplocal" / "extra.sas7bdat")).df.collect()
+    frame.with_columns(pl.lit("zzz").alias("EXTRA")).write_parquet(
+        python / "dplocal" / "extra.parquet"
+    )
+    assert run(RunConfig(sas, python, tmp_path / "out")) == 0
+    summary = json.loads((tmp_path / "out" / "summary.json").read_text())
+    assert summary["status"] == "WARN"
+    dataset = summary["datasets"][0]
+    assert dataset["status"] == "WARN"
+    assert dataset["reason"] == "python_only_columns"
+    assert dataset["conditions"] == [
+        {"severity": "WARN", "reason": "python_only_columns", "columns": ["extra"]}
+    ]
+    assert dataset["matched_pairs"] == frame.height
+    assert (dataset["sas_only"], dataset["python_only"]) == (0, 0)
+    html = (tmp_path / "out" / "index.html").read_text()
+    assert "Parquet has 1 column SAS lacks" in html
+    assert "those values are not compared" in html
+
+
+def test_sas_only_column_fails_but_shared_values_still_compare(tmp_path: Path) -> None:
+    sas, python = _roots(tmp_path)
+    fixture = Path(__file__).resolve().parents[1] / ".parity-fixtures" / "productsales.sas7bdat"
+    shutil.copyfile(fixture, sas / "dplocal" / "gap.sas7bdat")
+    frame = polars_readstat.ScanReadstat(str(sas / "dplocal" / "gap.sas7bdat")).df.collect()
+    frame.drop("COUNTRY").write_parquet(python / "dplocal" / "gap.parquet")
+    assert run(RunConfig(sas, python, tmp_path / "out")) == 1
+    summary = json.loads((tmp_path / "out" / "summary.json").read_text())
+    dataset = summary["datasets"][0]
+    assert dataset["status"] == "FAIL"
+    assert dataset["reason"] == "sas_only_columns"
+    assert dataset["conditions"] == [
+        {"severity": "FAIL", "reason": "sas_only_columns", "columns": ["country"]}
+    ]
+    assert dataset["matched_pairs"] == frame.height
+    assert (dataset["sas_only"], dataset["python_only"]) == (0, 0)
+    details = [
+        json.loads(line)
+        for line in (tmp_path / "out" / summary["detail_links"][dataset["id"]])
+        .read_text()
+        .splitlines()
+    ]
+    assert len(details) == 2 * frame.height
+    assert all(row["status"] == "PASS" for row in details)
+    python_rows = [row for row in details if row["side"] == "python"]
+    assert all(row["values"]["country"] == {"type": "absent_column"} for row in python_rows)
+    sas_rows = [row for row in details if row["side"] == "sas"]
+    assert all(row["values"]["country"] != {"type": "absent_column"} for row in sas_rows)
+    html = (tmp_path / "out" / "index.html").read_text()
+    assert "Parquet is missing 1 column that SAS has" in html
+    assert "so no row can fully match" in html
+
+
+def test_all_conditions_reported_together(tmp_path: Path) -> None:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from sentinel_parity.io.duckdb_comparison import compare
+    from sentinel_parity.io.staging import stage
+
+    left_path, right_path = tmp_path / "left.parquet", tmp_path / "right.parquet"
+    pq.write_table(pa.table({"keep": ["a", "b"], "gone": [1, 2]}), left_path)
+    pq.write_table(pa.table({"keep": ["a", "BAD"], "extra": [True, True]}), right_path)
+    work = tmp_path / "work"
+    work.mkdir()
+    result = compare(
+        stage(left_path, "python", work),
+        stage(right_path, "python", work),
+        work,
+        "128MB",
+        "2GB",
+        "conditions-test",
+    )
+    assert result["status"] == "FAIL"
+    assert result["reason"] == "sas_only_columns"
+    assert result["conditions"] == [
+        {"severity": "FAIL", "reason": "sas_only_columns", "columns": ["gone"]},
+        {"severity": "FAIL", "reason": "value_mismatch"},
+        {"severity": "WARN", "reason": "python_only_columns", "columns": ["extra"]},
+    ]
+    assert (result["matched"], result["sas_only"], result["python_only"]) == (1, 1, 1)
 
 
 def test_fail_story_names_differing_columns(tmp_path: Path) -> None:

@@ -86,6 +86,7 @@ def run(config: RunConfig) -> int:
                         "python_only": 0,
                         "differing_column_counts": {},
                         "differing_pair_count": 0,
+                        "conditions": [{"severity": "FAIL", "reason": "missing_counterpart"}],
                         "detail_complete": True,
                         "metadata": metadata,
                     }
@@ -125,6 +126,7 @@ def run(config: RunConfig) -> int:
                         "python_only": rows,
                         "differing_column_counts": {},
                         "differing_pair_count": 0,
+                        "conditions": [{"severity": "FAIL", "reason": "missing_counterpart"}],
                         "detail_complete": True,
                         "metadata": metadata,
                     }
@@ -193,6 +195,7 @@ def run(config: RunConfig) -> int:
                         "type_mismatched_columns": result["type_mismatched_columns"],
                         "sas_only_columns": result.get("sas_only_columns", []),
                         "python_only_columns": result.get("python_only_columns", []),
+                        "conditions": result.get("conditions", []),
                         "differing_column_counts": dict(
                             sorted(column_counts.items(), key=lambda item: (-item[1], item[0]))
                         ),
@@ -217,6 +220,7 @@ def run(config: RunConfig) -> int:
                         "matched_pairs": 0,
                         "sas_only": 0,
                         "python_only": 0,
+                        "conditions": [],
                         "detail_complete": False,
                         "metadata": {},
                     }
@@ -360,6 +364,7 @@ def _one_sided_error(ident: str, entry: FileEntry, exc: Exception) -> dict[str, 
         "matched_pairs": 0,
         "sas_only": 0,
         "python_only": 0,
+        "conditions": [],
         "detail_complete": False,
         "metadata": {},
     }

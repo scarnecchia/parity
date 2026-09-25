@@ -281,11 +281,12 @@ footer .build { font: var(--text-xs)/1.6 var(--mono); color: var(--ink-faint); o
 </nav>
 {% endif %}
 {% for dataset in summary.datasets %}
+{% set conditions = dataset.get("conditions") or [] %}
 <section id="dataset-{{ dataset.id }}">
   <header>
     <h2>{{ dataset.name }}</h2>
     <span class="pill {{ dataset.status }}">{{ dataset.status }}</span>
-    {% if dataset.reason and dataset.status != "ERROR" %}<span class="reason-chip">{{ dataset.reason }}</span>{% endif %}
+    {% if dataset.status != "ERROR" %}{% for condition in conditions %}<span class="reason-chip">{{ condition.reason }}</span>{% endfor %}{% endif %}
   </header>
   {% if dataset.row_order_mismatches %}
   <p class="order-flag">Row order differs from the Parquet file — {{ dataset.row_order_mismatches }} matched rows are misplaced</p>
@@ -293,37 +294,31 @@ footer .build { font: var(--text-xs)/1.6 var(--mono); color: var(--ink-faint); o
   {% if dataset.type_mismatched_columns %}
   <p class="type-note">Character vs numeric columns: {% for name in dataset.type_mismatched_columns %}<span class="col-name">{{ name }}</span>{{ ", " if not loop.last }}{% endfor %}</p>
   {% endif %}
-  {% if dataset.status == "WARN" %}
-  <p class="story">Differences are limited to those character vs numeric columns, so this dataset passes.</p>
-  {% elif dataset.status == "FAIL" %}
   {% macro column_list(names) -%}
   {%- for name in names -%}<span class="col-name">{{ name }}</span>{% if not loop.last %}, {% endif %}{% endfor %}
   {%- endmacro %}
-  {% set sas_cols = dataset.get("sas_only_columns") or [] %}
-  {% set py_cols = dataset.get("python_only_columns") or [] %}
   {% set counts = dataset.get("differing_column_counts") or {} %}
   {% set pairs = dataset.get("differing_pair_count") or 0 %}
+  {% if dataset.status == "ERROR" %}
+  <p class="story">The comparison did not run{% if dataset.get("error_message") %}: {{ dataset["error_message"] }}{% endif %}.</p>
+  {% else %}
+  {% for condition in conditions %}
   <p class="story">
-    {%- if dataset.reason == "schema_columns_differ" -%}
-      {%- if sas_cols and py_cols -%}
-        SAS has {{ sas_cols|length }} column{{ "s" if sas_cols|length != 1 }} Parquet lacks ({{ column_list(sas_cols) }}) and Parquet has {{ py_cols|length }} column{{ "s" if py_cols|length != 1 }} SAS lacks ({{ column_list(py_cols) }}), so no row can match until the column sets agree.
-      {%- elif sas_cols -%}
-        SAS has {{ sas_cols|length }} column{{ "s" if sas_cols|length != 1 }} Parquet lacks ({{ column_list(sas_cols) }}), so no row can match until the column sets agree.
-      {%- elif py_cols -%}
-        Parquet has {{ py_cols|length }} column{{ "s" if py_cols|length != 1 }} SAS lacks ({{ column_list(py_cols) }}), so no row can match until the column sets agree.
-      {%- else -%}
-        Both files have the same columns in a different order, so rows are not compared.
-      {%- endif %}
-    {%- elif dataset.reason == "missing_counterpart" -%}
-      No {{ "Parquet" if dataset.sas_rows else "SAS" }} counterpart was found for this dataset, so none of its rows can be compared.
-    {%- else -%}
-      {%- if pairs %}{{ pairs }} row pair{{ "s" if pairs != 1 }} do{{ "es" if pairs == 1 }} not match. Differing columns: {% for name, count in counts.items() %}<span class="col-name">{{ name }}</span> ({{ count }} row{{ "s" if count != 1 }}){{ ", " if not loop.last }}{% endfor %}. {% endif -%}
-      {%- if dataset.sas_only > pairs %}{{ dataset.sas_only - pairs }} row{{ "s" if (dataset.sas_only - pairs) != 1 }} appear{{ "s" if (dataset.sas_only - pairs) == 1 }} only in SAS. {% endif -%}
-      {%- if dataset.python_only > pairs %}{{ dataset.python_only - pairs }} row{{ "s" if (dataset.python_only - pairs) != 1 }} appear{{ "s" if (dataset.python_only - pairs) == 1 }} only in Parquet.{% endif -%}
+    {%- if condition.reason == "missing_counterpart" -%}
+    No {{ "Parquet" if dataset.sas_rows else "SAS" }} counterpart was found for this dataset, so none of its rows can be compared.
+    {%- elif condition.reason == "sas_only_columns" -%}
+    Parquet is missing {{ condition.columns|length }} column{{ "s" if condition.columns|length != 1 }} that SAS has ({{ column_list(condition.columns) }}), so no row can fully match.
+    {%- elif condition.reason == "python_only_columns" -%}
+    Parquet has {{ condition.columns|length }} column{{ "s" if condition.columns|length != 1 }} SAS lacks ({{ column_list(condition.columns) }}), so those values are not compared.
+    {%- elif condition.reason == "type_mismatch" -%}
+    Differences are limited to those character vs numeric columns, so this dataset passes.
+    {%- elif condition.reason == "value_mismatch" -%}
+    {%- if pairs %}{{ pairs }} row pair{{ "s" if pairs != 1 }} do{{ "es" if pairs == 1 }} not match. Differing columns: {% for name, count in counts.items() %}<span class="col-name">{{ name }}</span> ({{ count }} row{{ "s" if count != 1 }}){{ ", " if not loop.last }}{% endfor %}. {% endif -%}
+    {%- if dataset.sas_only > pairs %}{{ dataset.sas_only - pairs }} row{{ "s" if (dataset.sas_only - pairs) != 1 }} appear{{ "s" if (dataset.sas_only - pairs) == 1 }} only in SAS. {% endif -%}
+    {%- if dataset.python_only > pairs %}{{ dataset.python_only - pairs }} row{{ "s" if (dataset.python_only - pairs) != 1 }} appear{{ "s" if (dataset.python_only - pairs) == 1 }} only in Parquet.{% endif -%}
     {%- endif %}
   </p>
-  {% elif dataset.status == "ERROR" %}
-  <p class="story">The comparison did not run{% if dataset.get("error_message") %}: {{ dataset["error_message"] }}{% endif %}.</p>
+  {% endfor %}
   {% endif %}
   {% if dataset.status != "ERROR" %}
   {% set stats = [
@@ -353,7 +348,7 @@ footer .build { font: var(--text-xs)/1.6 var(--mono); color: var(--ink-faint); o
   {% endif %}
   {% set truncation = preview_truncation.get(dataset.id, {}) %}
   {% set preview_records = previews.get(dataset.id) or [] %}
-  {% if (preview_records or truncation.get("sas", 0) or truncation.get("python", 0)) and dataset.reason != "schema_columns_differ" %}
+  {% if preview_records or truncation.get("sas", 0) or truncation.get("python", 0) %}
   <div class="preview">
     {% set omitted = [] %}
     {% if truncation.get("sas") %}{% set _ = omitted.append(truncation["sas"] ~ " SAS") %}{% endif %}

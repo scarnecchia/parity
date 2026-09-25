@@ -96,17 +96,22 @@ parity-report/
 
 `index.html` contains dataset summaries and a **mismatch-only, bounded preview**, with links to the complete JSONL details. The preview limit applies separately to each side of each dataset; truncation counts show how much was omitted. Passing rows are in JSONL, not the mismatch preview.
 
-`summary.json` includes the schema version, overall status, package versions, execution limits, dataset entries, preview truncation counts, and `detail_links` mapping dataset IDs to relative JSONL paths. Dataset entries include names, status, reason, row counts, `matched_pairs`, `sas_only`, `python_only`, `row_order_mismatches`, and `detail_complete`. `row_order_mismatches` counts matched rows whose file positions differ — the comparison is order-independent, so reordered files still pass, and `index.html` flags this at the top of the dataset section. Available metadata includes reader schemas and metadata, original filenames, and original/normalized describe output for successfully compared pairs. Fields and metadata available for one-sided or error entries differ from successful pairs.
+`summary.json` includes the schema version, overall status, package versions, execution limits, dataset entries, preview truncation counts, and `detail_links` mapping dataset IDs to relative JSONL paths. Dataset entries include names, status, reason, `conditions`, row counts, `matched_pairs`, `sas_only`, `python_only`, `row_order_mismatches`, and `detail_complete`. `row_order_mismatches` counts matched rows whose file positions differ — the comparison is order-independent, so reordered files still pass, and `index.html` flags this at the top of the dataset section. Available metadata includes reader schemas and metadata, original filenames, and original/normalized describe output for successfully compared pairs. Fields and metadata available for one-sided or error entries differ from successful pairs.
 
 `matched_pairs` counts equal occurrence pairs, not individual detail lines. Each matched pair contributes two `PASS` lines, one per side. `sas_only` and `python_only` count unmatched occurrences. For a completed comparison, each side's row count equals `matched_pairs` plus its unmatched count.
 
-These dataset reasons mark every readable row as `FAIL`, without attempting occurrence matching:
+`missing_counterpart` marks every readable row as `FAIL` without attempting occurrence matching: the dataset exists on only one side.
 
-| Reason | Meaning |
-| --- | --- |
-| `missing_counterpart` | The dataset exists on only one side. |
-| `schema_columns_differ` | The normalized column sets differ. |
-| `incompatible_column_family` | Corresponding columns belong to different supported type families. |
+A successfully compared dataset carries `conditions`: every problem found, not just the first. Comparison always runs on the columns both sides share, so a schema delta never stops the row checks.
+
+| Condition | Severity | Meaning |
+| --- | --- | --- |
+| `sas_only_columns` | FAIL | Parquet lacks columns present in SAS, so no row can fully match. |
+| `python_only_columns` | WARN | Parquet has extra columns SAS lacks; their values are not compared. |
+| `value_mismatch` | FAIL | Unmatched rows differ in shared columns beyond character-vs-numeric coercion. |
+| `type_mismatch` | WARN | Every difference is inside character-vs-numeric columns, so the dataset passes. |
+
+A dataset FAILs when any condition fails, WARNs when only warnings remain (which does not fail the run), and PASSes with none. `reason` repeats the most severe condition's code (`null` when clean).
 
 An `ERROR` dataset has `detail_complete: false`: do not interpret its zero counts as evidence of an empty input or expect complete JSONL details. Its reason is only the exception class, such as `TypeError` or `PermissionError`. Exception messages are redacted because reader/database errors can disclose cell values, paths, or SQL. Check type support, path permissions, and resource settings as appropriate; do not paste raw third-party errors into shared logs or tickets.
 
@@ -124,7 +129,7 @@ For a dataset with `detail_complete: true`, JSONL contains one line per row on e
 | `reason` | `null` for a matched occurrence; `only_sas` / `only_python` for unmatched occurrences, or an all-row reason above. |
 | `values` | Map of case-folded column names to typed values. |
 
-Non-null cells use envelopes with `type` and `value`. Numeric envelopes also carry an exact `canonical` key; numeric `value` is a string preserving the decoded value's textual form. Strings and Booleans retain their JSON value types, binary values use base64 strings, and dates/timestamps use ISO-formatted strings. A null cell is JSON `null`. In schema-mismatch details, an absent column is `{"type":"absent_column"}`, distinct from a present column containing null.
+Non-null cells use envelopes with `type` and `value`. Numeric envelopes also carry an exact `canonical` key; numeric `value` is a string preserving the decoded value's textual form. Strings and Booleans retain their JSON value types, binary values use base64 strings, and dates/timestamps use ISO-formatted strings. A null cell is JSON `null`. A column that exists on one side only — schema deltas — renders as `{"type":"absent_column"}` on the other side, distinct from a present column containing null.
 
 ### Equality rules
 
