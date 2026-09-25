@@ -11,3 +11,4 @@ parity-report/
 __pycache__/
 .hypothesis/
 .playwright-mcp/
+.impeccable/
