@@ -376,14 +376,14 @@ def test_float_repr_matches_python_repr_on_specials() -> None:
         float("-inf"),
     ]
     rendered = float_repr(_series("v", specials))
-    for value, got in zip(specials, rendered.to_list()):
+    for value, got in zip(specials, rendered.to_list(), strict=True):
         assert got == repr(value), value
 
 
 @given(st.lists(st.floats(allow_nan=True, allow_infinity=True), min_size=1, max_size=64))
 def test_float_repr_matches_python_repr(values: list[float]) -> None:
     rendered = float_repr(_series("v", values))
-    for value, got in zip(values, rendered.to_list()):
+    for value, got in zip(values, rendered.to_list(), strict=True):
         assert got == repr(value), value
 
 
@@ -404,5 +404,5 @@ def test_float_repr_matches_python_repr_seeded_sweep() -> None:
         for bits in (rng.getrandbits(64) for _ in range(20000))
     ]
     rendered = float_repr(pl.Series("v", values))
-    for value, got in zip(values, rendered.to_list()):
+    for value, got in zip(values, rendered.to_list(), strict=True):
         assert got == repr(value), value
