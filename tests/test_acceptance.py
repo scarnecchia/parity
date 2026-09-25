@@ -1583,7 +1583,7 @@ def test_type_crossed_warn_run(tmp_path: Path) -> None:
     assert summary["status"] == "WARN"
     assert dataset["type_mismatched_columns"] == ["year"]
     html = (tmp_path / "out" / "index.html").read_text()
-    assert "Character vs numeric columns: year" in html
+    assert 'Character vs numeric columns: <span class="col-name">year</span>' in html
     assert "this dataset passes" in html
     assert "WARN" in html
 
