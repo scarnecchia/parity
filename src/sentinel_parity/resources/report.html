@@ -133,6 +133,21 @@ section h2 {
   font: 500 0.8125rem/1.5 var(--mono);
   color: var(--ink-muted);
 }
+.story {
+  margin: 0.875rem 0 0;
+  max-width: 75ch;
+  font: 400 0.875rem/1.55 system-ui, sans-serif;
+}
+.story .col-name,
+.preview-note .col-name {
+  font: 600 0.8125rem/1.4 var(--mono);
+  color: var(--ink);
+}
+.preview-note {
+  margin: 0.5rem 0 0;
+  font: 400 0.8125rem/1.5 system-ui, sans-serif;
+  color: var(--ink-muted);
+}
 .stat { display: flex; flex-direction: column; gap: 0.0625rem; min-width: 3.5rem; }
 .stat .label {
   font: 500 0.6875rem/1.4 system-ui, sans-serif;
@@ -269,6 +284,34 @@ footer .build { font: 0.75rem/1.6 var(--mono); color: var(--ink-faint); }
   {% if dataset.type_mismatched_columns %}
   <p class="type-note">Character vs numeric columns: {{ dataset.type_mismatched_columns|join(", ") }}</p>
   {% endif %}
+  {% if dataset.status == "FAIL" %}
+  {% macro column_list(names) -%}
+  {%- for name in names -%}<span class="col-name">{{ name }}</span>{% if not loop.last %}, {% endif %}{% endfor %}
+  {%- endmacro %}
+  {% set sas_cols = dataset.get("sas_only_columns") or [] %}
+  {% set py_cols = dataset.get("python_only_columns") or [] %}
+  {% set counts = dataset.get("differing_column_counts") or {} %}
+  {% set pairs = dataset.get("differing_pair_count") or 0 %}
+  <p class="story">
+    {%- if dataset.reason == "schema_columns_differ" -%}
+      {%- if sas_cols and py_cols -%}
+        SAS has {{ sas_cols|length }} column{{ "s" if sas_cols|length != 1 }} Parquet lacks ({{ column_list(sas_cols) }}) and Parquet has {{ py_cols|length }} column{{ "s" if py_cols|length != 1 }} SAS lacks ({{ column_list(py_cols) }}) — no row can match until the column sets agree.
+      {%- elif sas_cols -%}
+        SAS has {{ sas_cols|length }} column{{ "s" if sas_cols|length != 1 }} Parquet lacks ({{ column_list(sas_cols) }}) — no row can match until the column sets agree.
+      {%- elif py_cols -%}
+        Parquet has {{ py_cols|length }} column{{ "s" if py_cols|length != 1 }} SAS lacks ({{ column_list(py_cols) }}) — no row can match until the column sets agree.
+      {%- else -%}
+        Both files have the same columns in a different order, so rows are not compared.
+      {%- endif %}
+    {%- elif dataset.reason == "missing_counterpart" -%}
+      No {{ "Parquet" if dataset.sas_rows else "SAS" }} counterpart was found for this dataset, so none of its rows can be compared.
+    {%- else -%}
+      {%- if pairs %}{{ pairs }} row pair{{ "s" if pairs != 1 }} do{{ "es" if pairs == 1 }} not match — differing columns: {% for name, count in counts.items() %}<span class="col-name">{{ name }}</span> ({{ count }} row{{ "s" if count != 1 }}){{ ", " if not loop.last }}{% endfor %}. {% endif -%}
+      {%- if dataset.sas_only > pairs %}{{ dataset.sas_only - pairs }} row{{ "s" if (dataset.sas_only - pairs) != 1 }} appear{{ "s" if (dataset.sas_only - pairs) == 1 }} only in SAS. {% endif -%}
+      {%- if dataset.python_only > pairs %}{{ dataset.python_only - pairs }} row{{ "s" if (dataset.python_only - pairs) != 1 }} appear{{ "s" if (dataset.python_only - pairs) == 1 }} only in Parquet.{% endif -%}
+    {%- endif %}
+  </p>
+  {% endif %}
   {% set stats = [
     ("SAS rows", dataset.sas_rows, false),
     ("Parquet rows", dataset.python_rows, false),
@@ -294,39 +337,55 @@ footer .build { font: 0.75rem/1.6 var(--mono); color: var(--ink-faint); }
   </details>
   {% endif %}
   {% set truncation = preview_truncation.get(dataset.id, {}) %}
-  {% if previews.get(dataset.id) or truncation.get("sas", 0) or truncation.get("python", 0) %}
+  {% set preview_records = previews.get(dataset.id) or [] %}
+  {% if (preview_records or truncation.get("sas", 0) or truncation.get("python", 0)) and dataset.reason != "schema_columns_differ" %}
   <div class="preview">
-    <h3>Mismatch preview — omitted {{ truncation.get("sas", 0) }} SAS and {{ truncation.get("python", 0) }} Parquet mismatches</h3>
-    {% if previews.get(dataset.id) %}
-    {% macro value_chips(record) %}
+    {% set omitted = [] %}
+    {% if truncation.get("sas") %}{% set _ = omitted.append(truncation["sas"] ~ " SAS") %}{% endif %}
+    {% if truncation.get("python") %}{% set _ = omitted.append(truncation["python"] ~ " Parquet") %}{% endif %}
+    <h3>Mismatch preview{% if omitted %} — omitted {{ omitted|join(" and ") }} mismatch{{ "es" if (truncation.get("sas", 0) + truncation.get("python", 0)) != 1 }}{% endif %}</h3>
+    {% if preview_records %}
+    {% macro value_chips(record, differing_only=false) %}
     {% set diffs = record.differing_columns or [] %}
-    {% if diffs %}<div class="diff-note">{{ diffs|join(", ") }}</div>{% endif %}
     <span class="cell-chips">
       {% for name, env in record["values"].items() %}
+      {% if (not differing_only) or name in diffs %}
       {% set absent = env is not none and "value" not in env and env["type"] == "absent_column" %}
       <span class="cell-chip {{ "is-diff" if name in diffs or absent else "" }}"><span class="name">{{ name }}</span>{% if env is none %}<span class="val">null</span>{% elif absent %}<span class="val">absent</span>{% elif "value" in env %}<span class="val">{{ env["value"] }}</span>{% else %}<span class="val">{{ env["type"] }}</span>{% endif %}</span>
+      {% endif %}
       {% endfor %}
     </span>
     {% endmacro %}
+    {% macro reason_phrase(reason) -%}
+    {%- if reason == "only_sas" %}every previewed row appears only in SAS
+    {%- elif reason == "only_python" %}every previewed row appears only in Parquet
+    {%- elif reason == "missing_counterpart" %}every previewed row has no counterpart on the other side
+    {%- else %}every previewed row is flagged {{ reason }}
+    {%- endif %}
+    {%- endmacro %}
+    {% set paired = preview_records|selectattr("pair_id")|groupby("pair_id") %}
+    {% set singles = preview_records|rejectattr("pair_id")|list %}
+    {% set reasons = preview_records|map(attribute="reason")|select|unique|list %}
+    {% if not paired and singles and reasons|length == 1 %}
+    <p class="preview-note">{{ reason_phrase(reasons[0]) }}.</p>
+    {% endif %}
     <table>
       <thead>
-        <tr><th scope="col">Rows</th><th scope="col">Reason</th><th scope="col">SAS values</th><th scope="col">Parquet values</th></tr>
+        <tr><th scope="col">Row</th><th scope="col">SAS values</th><th scope="col">Parquet values</th></tr>
       </thead>
       <tbody>
-        {% for pair_id, group in previews[dataset.id]|selectattr("pair_id")|groupby("pair_id") %}
+        {% for pair_id, group in paired %}
         {% set sas_group = group|selectattr("side", "equalto", "sas")|list %}
         {% set python_group = group|selectattr("side", "equalto", "python")|list %}
         <tr>
-          <td class="side"><span class="side-badge">sas / parquet</span><div class="row-num">{{ (sas_group[0].staging_row_number if sas_group else "—") }} / {{ (python_group[0].staging_row_number if python_group else "—") }}</div></td>
-          <td class="reason-cell"></td>
-          <td>{% if sas_group %}{{ value_chips(sas_group[0]) }}{% endif %}</td>
-          <td>{% if python_group %}{{ value_chips(python_group[0]) }}{% endif %}</td>
+          <td class="side"><span class="side-badge">sas / parquet</span><div class="row-num">{{ sas_group[0].staging_row_number if sas_group else "—" }} / {{ python_group[0].staging_row_number if python_group else "—" }}</div></td>
+          <td>{% if sas_group %}{{ value_chips(sas_group[0], true) }}{% endif %}</td>
+          <td>{% if python_group %}{{ value_chips(python_group[0], true) }}{% endif %}</td>
         </tr>
         {% endfor %}
-        {% for row in previews[dataset.id]|rejectattr("pair_id")|list %}
+        {% for row in singles %}
         <tr>
           <td class="side"><span class="side-badge">{{ row.side }}</span><div class="row-num">{{ row.staging_row_number }}</div></td>
-          <td class="reason-cell">{% if row.reason %}<span class="reason-chip">{{ row.reason }}</span>{% endif %}</td>
           {% if row.side == "sas" %}
           <td>{{ value_chips(row) }}</td><td></td>
           {% else %}
@@ -338,7 +397,7 @@ footer .build { font: 0.75rem/1.6 var(--mono); color: var(--ink-faint); }
     </table>
     <details class="raw-json">
       <summary>Raw preview values (JSON)</summary>
-      <pre>{% for row in previews[dataset.id] %}{{ row["values"]|tojson }}
+      <pre>{% for row in preview_records %}{{ row["values"]|tojson }}
 {% endfor %}</pre>
     </details>
     {% endif %}

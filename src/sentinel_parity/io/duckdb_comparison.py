@@ -53,6 +53,7 @@ def compare(
                 if _unsupported(dtype):
                     raise TypeError("unsupported logical column type")
         if left_columns != right_columns:
+            left_names, right_names = set(left_columns), set(right_columns)
             detail_path = _schema_failure(
                 left, right, work / f"{artifact_id}.jsonl", dataset_id, "schema_columns_differ"
             )
@@ -64,6 +65,8 @@ def compare(
                 "python_only": right["rows"],
                 "order_mismatches": 0,
                 "type_mismatched_columns": [],
+                "sas_only_columns": [name for name in left_columns if name not in right_names],
+                "python_only_columns": [name for name in right_columns if name not in left_names],
                 "details_path": detail_path,
             }
         keycols = [f"k_{name}" for name in left_columns]

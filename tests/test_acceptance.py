@@ -744,6 +744,10 @@ def test_all_rows_fail_for_schema_or_missing_file(tmp_path: Path) -> None:
     source = polars_readstat.ScanReadstat(str(sas / "dplocal" / "schema.sas7bdat")).df.collect()
     _write_parquet(python / "dplocal" / "schema.parquet", {"different": [None, "x"]})
     assert run(RunConfig(sas, python, tmp_path / "schema-out")) == 1
+    schema_html = (tmp_path / "schema-out" / "index.html").read_text()
+    assert "Parquet has 1 column SAS lacks" in schema_html
+    assert "no row can match until the column sets agree" in schema_html
+    assert "<h3>Mismatch preview" not in schema_html
     dataset, records = parse_details(tmp_path / "schema-out", "schema_columns_differ")
     assert dataset["reason"] == "schema_columns_differ"
     assert dataset["sas_rows"] == source.height and dataset["python_rows"] == 2
@@ -910,7 +914,7 @@ def test_one_sided_detail_values_use_typed_envelopes(tmp_path: Path) -> None:
     }
     assert summary["preview_truncation"][dataset["id"]]["python"] == 1
     html = (tmp_path / "out" / "index.html").read_text()
-    assert "omitted 0 SAS and 1 Parquet mismatches" in html
+    assert "omitted 1 Parquet mismatch" in html
     assert "NaN" not in (tmp_path / "out" / summary["detail_links"][dataset["id"]]).read_text()
 
 
@@ -959,7 +963,7 @@ def test_preview_zero_still_shows_mismatch_counts(tmp_path: Path) -> None:
     )
     assert summary["preview_truncation"][one_sided["id"]]["python"] == 2
     html = (tmp_path / "out" / "index.html").read_text()
-    assert "omitted 0 SAS and 2 Parquet mismatches" in html
+    assert "omitted 2 Parquet mismatches" in html
     assert "<table" not in html
 
 
@@ -1567,6 +1571,27 @@ def test_type_crossed_warn_run(tmp_path: Path) -> None:
     html = (tmp_path / "out" / "index.html").read_text()
     assert "Character vs numeric columns: year" in html
     assert "WARN" in html
+
+
+def test_fail_story_names_differing_columns(tmp_path: Path) -> None:
+    sas, python = _roots(tmp_path)
+    fixture = Path(__file__).resolve().parents[1] / ".parity-fixtures" / "productsales.sas7bdat"
+    shutil.copyfile(fixture, sas / "dplocal" / "story.sas7bdat")
+    frame = polars_readstat.ScanReadstat(str(sas / "dplocal" / "story.sas7bdat")).df.collect()
+    altered = frame.with_columns(
+        pl.when(pl.int_range(0, pl.len()) == 0)
+        .then(pl.lit("ZZZ"))
+        .otherwise(pl.col("COUNTRY"))
+        .alias("COUNTRY")
+    )
+    altered.write_parquet(python / "dplocal" / "story.parquet")
+    assert run(RunConfig(sas, python, tmp_path / "out")) == 1
+    dataset = json.loads((tmp_path / "out" / "summary.json").read_text())["datasets"][0]
+    assert dataset["differing_pair_count"] == 1
+    assert dataset["differing_column_counts"] == {"country": 1}
+    html = (tmp_path / "out" / "index.html").read_text()
+    assert "1 row pair does not match" in html
+    assert "country</span> (1 row)" in html
 
 
 def test_missing_and_text_forms_match_across_types(tmp_path: Path) -> None:

@@ -69,7 +69,9 @@ def run(config: RunConfig) -> int:
                     round_digits=config.round_digits,
                 )
                 details[ident] = detail
-                previews[ident], preview_truncation[ident] = _preview(detail, config.preview_rows)
+                previews[ident], preview_truncation[ident], _, _ = _preview(
+                    detail, config.preview_rows
+                )
                 datasets.append(
                     {
                         "id": ident,
@@ -81,6 +83,8 @@ def run(config: RunConfig) -> int:
                         "matched_pairs": 0,
                         "sas_only": rows,
                         "python_only": 0,
+                        "differing_column_counts": {},
+                        "differing_pair_count": 0,
                         "detail_complete": True,
                         "metadata": metadata,
                     }
@@ -104,7 +108,9 @@ def run(config: RunConfig) -> int:
                     round_digits=config.round_digits,
                 )
                 details[ident] = detail
-                previews[ident], preview_truncation[ident] = _preview(detail, config.preview_rows)
+                previews[ident], preview_truncation[ident], _, _ = _preview(
+                    detail, config.preview_rows
+                )
                 datasets.append(
                     {
                         "id": ident,
@@ -116,6 +122,8 @@ def run(config: RunConfig) -> int:
                         "matched_pairs": 0,
                         "sas_only": 0,
                         "python_only": rows,
+                        "differing_column_counts": {},
+                        "differing_pair_count": 0,
                         "detail_complete": True,
                         "metadata": metadata,
                     }
@@ -160,6 +168,9 @@ def run(config: RunConfig) -> int:
                         "types": python_stage["types"],
                     },
                 }
+                preview_records, truncation, column_counts, pair_count = _preview(
+                    Path(result["details_path"]), config.preview_rows
+                )
                 datasets.append(
                     {
                         "id": ident,
@@ -179,13 +190,18 @@ def run(config: RunConfig) -> int:
                         "python_only": result["python_only"],
                         "row_order_mismatches": result["order_mismatches"],
                         "type_mismatched_columns": result["type_mismatched_columns"],
+                        "sas_only_columns": result.get("sas_only_columns", []),
+                        "python_only_columns": result.get("python_only_columns", []),
+                        "differing_column_counts": dict(
+                            sorted(column_counts.items(), key=lambda item: (-item[1], item[0]))
+                        ),
+                        "differing_pair_count": pair_count,
                         "detail_complete": True,
                         "metadata": metadata,
                     }
                 )
-                previews[ident], preview_truncation[ident] = _preview(
-                    Path(result["details_path"]), config.preview_rows
-                )
+                previews[ident] = preview_records
+                preview_truncation[ident] = truncation
             except Exception as exc:
                 fatal = True
                 datasets.append(
@@ -341,10 +357,20 @@ def _one_sided_error(ident: str, entry: FileEntry, exc: Exception) -> dict[str, 
     }
 
 
-def _preview(path: Path, limit: int) -> tuple[list[dict[str, Any]], dict[str, int]]:
+def _preview(
+    path: Path, limit: int
+) -> tuple[list[dict[str, Any]], dict[str, int], dict[str, int], int]:
+    """Collect bounded preview records plus mismatch stats from the full stream.
+
+    The stats scan every detail record so the report story reflects all
+    mismatches, not only the previewed prefix. Paired rows are counted once
+    per pair (on the SAS record) so per-column counts describe row pairs.
+    """
     result: list[dict[str, Any]] = []
     shown = {"sas": 0, "python": 0}
     total = {"sas": 0, "python": 0}
+    column_counts: dict[str, int] = {}
+    pair_count = 0
     with path.open(encoding="utf-8") as source:
         for line in source:
             row = json.loads(line)
@@ -354,4 +380,14 @@ def _preview(path: Path, limit: int) -> tuple[list[dict[str, Any]], dict[str, in
                 if shown[side] < limit:
                     result.append(row)
                     shown[side] += 1
-    return result, {side: total[side] - shown[side] for side in total}
+                pair_id = row.get("pair_id")
+                if pair_id and side == "sas":
+                    pair_count += 1
+                    for name in row.get("differing_columns") or []:
+                        column_counts[name] = column_counts.get(name, 0) + 1
+    return (
+        result,
+        {side: total[side] - shown[side] for side in total},
+        column_counts,
+        pair_count,
+    )
