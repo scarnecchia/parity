@@ -1592,7 +1592,7 @@ def test_disk_backed_comparison_smoke(tmp_path: Path) -> None:
     assert sum(path.stat().st_size for path in work.rglob("*") if path.is_file()) > 0
 
 
-def test_except_all_disagreement_is_dataset_error(
+def test_row_conservation_invariant_is_enforced(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import sentinel_parity.io.duckdb_comparison as comparison
@@ -1603,16 +1603,18 @@ def test_except_all_disagreement_is_dataset_error(
     polars_readstat.ScanReadstat(
         str(sas / "dplocal" / "sample.sas7bdat")
     ).df.collect().write_parquet(python / "dplocal" / "sample.parquet")
-    original_count = comparison._except_count
+    original_stats = comparison._join_stats
     calls = 0
 
-    def disagree(connection: object, left: str, right: str, keycols: list[str]) -> int:
+    def undercount(connection: object, equality: str) -> tuple[int, int, int]:
         nonlocal calls
         calls += 1
-        actual = original_count(connection, left, right, keycols)  # type: ignore[arg-type]
-        return actual + (1 if calls == 1 else 0)
+        matched, sas_only, python_only = original_stats(connection, equality)  # type: ignore[arg-type]
+        return (
+            (matched - 1, sas_only, python_only) if calls == 1 else (matched, sas_only, python_only)
+        )
 
-    monkeypatch.setattr(comparison, "_except_count", disagree)
+    monkeypatch.setattr(comparison, "_join_stats", undercount)
     assert run(RunConfig(sas, python, tmp_path / "out")) == 2
     summary = json.loads((tmp_path / "out" / "summary.json").read_text())
     dataset = summary["datasets"][0]

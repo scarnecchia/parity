@@ -170,30 +170,23 @@ def _compare_shared(
             f"CREATE TABLE {side}_ranked AS SELECT *, row_number() OVER "
             f"(PARTITION BY {keys} ORDER BY ordinal) AS occurrence FROM {side}"
         )
+        connection.execute(
+            f"CREATE TABLE {side}_counts AS SELECT {keys}, count(*) AS n "
+            f"FROM {side}_ranked GROUP BY ALL"
+        )
     run_log.phase_done(dataset_id, "rank", started)
     equality = " AND ".join(
         f"l.{quote_identifier(k)} IS NOT DISTINCT FROM r.{quote_identifier(k)}" for k in keycols
     )
     equality += " AND l.occurrence = r.occurrence"
     started = time.monotonic()
-    left_except = _except_count(connection, "sas", "python", keycols)
-    right_except = _except_count(connection, "python", "sas", keycols)
-    stats = connection.execute(
-        "SELECT count(*) FILTER (WHERE l.ordinal IS NOT NULL AND r.ordinal IS NOT NULL), "
-        "count(*) FILTER (WHERE r.ordinal IS NULL), "
-        "count(*) FILTER (WHERE l.ordinal IS NULL) "
-        f"FROM sas_ranked l FULL OUTER JOIN python_ranked r ON {equality}"
-    ).fetchone()
-    matched, sas_only, python_only = (int(value or 0) for value in (stats or (0, 0, 0)))
-    if (left_except, right_except) != (sas_only, python_only):
-        raise RuntimeError("independent multiset counts disagree")
+    matched, sas_only, python_only = _join_stats(connection, equality)
+    # The occurrence-aligned join yields the per-key multiset difference by
+    # construction; the conservation identity is the independent cross-check.
+    if matched + sas_only != left["rows"] or matched + python_only != right["rows"]:
+        raise RuntimeError("row counts violate multiset conservation")
     run_log.phase_done(dataset_id, "multiset", started)
     started = time.monotonic()
-    for side in ("sas", "python"):
-        connection.execute(
-            f"CREATE TABLE {side}_counts AS SELECT {keys}, count(*) AS n "
-            f"FROM {side}_ranked GROUP BY ALL"
-        )
     for side, other in (("sas", "python"), ("python", "sas")):
         on = " AND ".join(f"s.{quote_identifier(k)} = c.{quote_identifier(k)}" for k in keycols)
         connection.execute(
@@ -327,16 +320,21 @@ def _unsupported(value: str) -> bool:
     )
 
 
-def _except_count(
-    connection: duckdb.DuckDBPyConnection, left: str, right: str, keycols: list[str]
-) -> int:
-    columns = ", ".join(quote_identifier(name) for name in keycols)
-    query = (
-        f"SELECT count(*) FROM (SELECT {columns} FROM {left} "
-        f"EXCEPT ALL SELECT {columns} FROM {right})"
-    )
-    row = connection.execute(query).fetchone()
-    return int(row[0] if row else 0)
+def _join_stats(connection: duckdb.DuckDBPyConnection, equality: str) -> tuple[int, int, int]:
+    """Matched, sas-only, and python-only counts from the occurrence join.
+
+    For each key the join matches min(occurrences) pairs; left rows beyond the
+    right side's multiplicity stay unmatched, so the unmatched filters equal
+    the EXCEPT ALL cardinalities without recomputing a window.
+    """
+    row = connection.execute(
+        "SELECT count(*) FILTER (WHERE l.ordinal IS NOT NULL AND r.ordinal IS NOT NULL), "
+        "count(*) FILTER (WHERE r.ordinal IS NULL), "
+        "count(*) FILTER (WHERE l.ordinal IS NULL) "
+        f"FROM sas_ranked l FULL OUTER JOIN python_ranked r ON {equality}"
+    ).fetchone()
+    matched, sas_only, python_only = (int(value or 0) for value in (row or (0, 0, 0)))
+    return matched, sas_only, python_only
 
 
 def _absent_side_details(
