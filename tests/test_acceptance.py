@@ -1262,6 +1262,54 @@ def test_html_escaping(tmp_path: Path) -> None:
     assert "<img src=x>" not in html
 
 
+def _load_golden(name: str) -> dict[str, object]:
+    import gzip
+
+    return json.loads(
+        gzip.decompress((Path(__file__).with_name("golden") / name).read_bytes()).decode("utf-8")
+    )
+
+
+def test_adversarial_stage_matches_golden(tmp_path: Path) -> None:
+    import adversarial
+
+    golden = _load_golden("adversarial_stage.json.gz")
+    cases = {
+        "base_default": ("a", None),
+        "base_round2": ("a", 2),
+        "perturbed_default": ("b", None),
+        "empty_default": ("empty", None),
+    }
+    for case, (variant, round_digits) in cases.items():
+        source = tmp_path / f"{variant}.parquet"
+        adversarial.write_adversarial(source, variant)
+        grid = adversarial.stage_grid(source, tmp_path / f"work-{case}", round_digits=round_digits)
+        assert grid == golden["cases"][case], case
+
+
+def test_detail_jsonl_matches_golden(tmp_path: Path) -> None:
+    import adversarial
+
+    golden = _load_golden("adversarial_details.json.gz")
+    left = tmp_path / "left.parquet"
+    adversarial.write_adversarial(left, "a")
+    right = tmp_path / "right.parquet"
+    adversarial.write_adversarial(right, "b")
+    disjoint = tmp_path / "disjoint.parquet"
+    adversarial.write_disjoint(disjoint)
+    captures = {
+        "shared": adversarial.comparison_capture(left, right, "goldenadv", tmp_path / "shared"),
+        "absent": adversarial.comparison_capture(
+            left, disjoint, "goldenabsent", tmp_path / "absent"
+        ),
+    }
+    for case, capture in captures.items():
+        expected = golden[case]
+        assert capture["result"] == expected["result"], case
+        assert len(capture["records"]) == len(expected["records"])
+        assert capture["records"] == expected["records"], case
+
+
 def test_summary_detail_reconciliation(tmp_path: Path) -> None:
     sas, python = _roots(tmp_path)
     shutil.copyfile(

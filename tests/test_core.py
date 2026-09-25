@@ -1,4 +1,5 @@
-from datetime import UTC, date, datetime
+import json
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from fractions import Fraction
 
@@ -12,6 +13,9 @@ from sentinel_parity.core.value_encoding import (
     canonical_key,
     numeric_key,
     round_to_decimal_places,
+    rounded_display,
+    temporal_ns_iso,
+    temporal_ns_key,
     typed_value,
 )
 
@@ -168,3 +172,67 @@ def test_stripped_dataset_identity_collision_is_rejected() -> None:
     plain = FileEntry("dplocal", "x", "x.sas7bdat", "/b")
     with pytest.raises(ValueError, match="ambiguous case-insensitive dataset identity"):
         pair_files([prefixed, plain], [])
+
+
+@given(st.text())
+def test_text_keys_ignore_trailing_whitespace(text: str) -> None:
+    assert canonical_key(text) == canonical_key(text.rstrip())
+
+
+@given(st.decimals(allow_nan=False, allow_infinity=False), st.integers(min_value=0, max_value=12))
+def test_rounding_is_idempotent(value: Decimal, digits: int) -> None:
+    rounded = round_to_decimal_places(value, digits)
+    assert round_to_decimal_places(rounded, digits) == rounded
+
+
+@given(st.text(alphabet=" \t\n\r\x0b\x0c", max_size=8))
+def test_whitespace_text_unifies_with_null(blank: str) -> None:
+    assert canonical_key(blank) == "null"
+    assert canonical_key(blank, round_digits=3) == "null"
+
+
+@given(st.integers(min_value=-(2**54), max_value=2**54))
+def test_temporal_keys_roundtrip_through_iso(micros: int) -> None:
+    epoch_ns = micros * 1000
+    for timezone_aware in (False, True):
+        parsed = datetime.fromisoformat(temporal_ns_iso(epoch_ns, timezone_aware))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        delta = parsed.astimezone(UTC) - datetime(1970, 1, 1, tzinfo=UTC)
+        assert (delta // timedelta(microseconds=1)) * 1000 == epoch_ns
+        assert canonical_key(parsed) == temporal_ns_key(epoch_ns)
+
+
+@given(st.integers(min_value=-(2**70), max_value=2**70))
+def test_integer_and_float_keys_agree_only_when_exactly_representable(value: int) -> None:
+    assert (canonical_key(value) == canonical_key(float(value))) == (
+        Fraction(value) == Fraction(float(value))
+    )
+
+
+def _value_strategy() -> st.SearchStrategy[object]:
+    return st.one_of(
+        st.integers(),
+        st.floats(),
+        st.decimals(allow_nan=True, allow_infinity=True),
+        st.text(),
+        st.binary(),
+        st.dates(),
+        st.datetimes(timezones=st.one_of(st.none(), st.just(UTC))),
+    )
+
+
+@given(_value_strategy())
+def test_envelopes_roundtrip_through_json(value: object) -> None:
+    envelope = typed_value(value)
+    assert envelope == json.loads(json.dumps(envelope, ensure_ascii=False))
+
+
+def test_rounded_display_huge_integral_envelope() -> None:
+    envelope = typed_value(1e308, round_digits=2)
+    assert envelope is not None
+    shown = str(envelope["value"])
+    assert "E" not in shown
+    assert Decimal(shown) == round_to_decimal_places(Decimal(1e308), 2)
+    assert envelope["canonical"] == canonical_key(1e308, round_digits=2)
+    assert rounded_display(Decimal("-0.0"), 2) == Decimal("-0")
