@@ -15,13 +15,13 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 import duckdb
-import pyarrow.parquet as pq
 
 from sentinel_parity.config import DEFAULT_THREADS
 from sentinel_parity.core.comparison_sql import quote_identifier
 from sentinel_parity.io import run_log
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 
@@ -95,7 +95,7 @@ def compare(
         if not shared:
             # No column is comparable: every row is one-sided and every
             # schema delta already appears in the schema conditions.
-            _absent_side_details(left, right, detail_path, dataset_id, union)
+            _absent_side_details(connection, left, right, detail_path, dataset_id, union)
             sas_only, python_only = left["rows"], right["rows"]
         else:
             matched, sas_only, python_only, order_mismatches = _compare_shared(
@@ -224,69 +224,132 @@ def _compare_shared(
         f"{equality} WHERE l.ordinal != r.ordinal"
     ).fetchone()
     order_mismatches = int(order_row[0]) if order_row else 0
-    parts: list[str] = []
-    for i, name in enumerate(union):
+    dataset_ref = _sql_string(dataset_id)
+    projections = [
+        "l.ordinal AS " + quote_identifier("l_ord"),
+        "r.ordinal AS " + quote_identifier("r_ord"),
+        "sa.diffs AS " + quote_identifier("s_diffs"),
+        "sa.pair_rank AS " + quote_identifier("s_pair"),
+        "pa.diffs AS " + quote_identifier("p_diffs"),
+        "pa.pair_rank AS " + quote_identifier("p_pair"),
+    ]
+    for name in union:
         if name in left_names:
-            parts.append(f"l.{quote_identifier('v_' + name)} AS l_{i}")
-        else:
-            parts.append(f"CAST(NULL AS VARCHAR) AS l_{i}")
+            projections.append(
+                f"l.{quote_identifier('v_' + name)} AS {quote_identifier('l_v_' + name)}"
+            )
         if name in right_names:
-            parts.append(f"r.{quote_identifier('v_' + name)} AS r_{i}")
-        else:
-            parts.append(f"CAST(NULL AS VARCHAR) AS r_{i}")
-    selected = ", ".join(parts)
-    query = (
-        "SELECT l.ordinal AS l_ord, r.ordinal AS r_ord, "
-        "sa.diffs AS s_diffs, sa.pair_rank AS s_pair, "
-        "pa.diffs AS p_diffs, pa.pair_rank AS p_pair, "
-        f"{selected} FROM sas_ranked l FULL OUTER JOIN python_ranked r ON {equality} "
+            projections.append(
+                f"r.{quote_identifier('v_' + name)} AS {quote_identifier('r_v_' + name)}"
+            )
+    sas_record = _side_record(
+        "sas",
+        quote_identifier("l_ord"),
+        quote_identifier("r_ord"),
+        _values_object(_present_cell("l_v_", left_names), union),
+        quote_identifier("s_diffs"),
+        quote_identifier("s_pair"),
+        dataset_ref,
+    )
+    python_record = _side_record(
+        "python",
+        quote_identifier("r_ord"),
+        quote_identifier("l_ord"),
+        _values_object(_present_cell("r_v_", right_names), union),
+        quote_identifier("p_diffs"),
+        quote_identifier("p_pair"),
+        dataset_ref,
+    )
+    # Two statements keep peak memory bounded: the join writes its result to
+    # a disk-backed table first, releasing its hash tables before the record
+    # expressions build wide JSON vectors per chunk.
+    connection.execute(
+        "CREATE TABLE detail_base AS SELECT "
+        + ", ".join(projections)
+        + f" FROM sas_ranked l FULL OUTER JOIN python_ranked r ON {equality} "
         "LEFT JOIN annotations sa ON sa.s_ordinal = l.ordinal "
         "LEFT JOIN annotations pa ON pa.p_ordinal = r.ordinal"
     )
-    with detail_path.open("w", encoding="utf-8") as output:
-        cursor = connection.execute(query)
-        while rows := cursor.fetchmany(1024):
-            for row in rows:
-                l_ord, r_ord = row[0], row[1]
-                for side, ordinal, has_other, diffs, pair_id in (
-                    ("sas", l_ord, r_ord is not None, row[2], row[3]),
-                    ("python", r_ord, l_ord is not None, row[4], row[5]),
-                ):
-                    if ordinal is not None:
-                        values: dict[str, Any] = {}
-                        for i, name in enumerate(union):
-                            offset = 6 + i * 2
-                            raw = row[offset] if side == "sas" else row[offset + 1]
-                            present = name in left_names if side == "sas" else name in right_names
-                            values[name] = (
-                                (json.loads(raw) if raw is not None else None)
-                                if present
-                                else {"type": "absent_column"}
-                            )
-                        record = {
-                            "schema_version": 1,
-                            "dataset_id": dataset_id,
-                            "side": side,
-                            "staging_row_number": ordinal,
-                            "status": "PASS" if has_other else "FAIL",
-                            "reason": None
-                            if has_other
-                            else ("only_sas" if side == "sas" else "only_python"),
-                            "values": values,
-                        }
-                        if not has_other:
-                            record["differing_columns"] = json.loads(diffs) if diffs else None
-                            record["pair_id"] = pair_id
-                        output.write(
-                            json.dumps(
-                                record,
-                                ensure_ascii=False,
-                                separators=(",", ":"),
-                            )
-                            + "\n"
-                        )
+    records_query = (
+        "SELECT unnest([" + sas_record + ", " + python_record + "]) AS rec FROM detail_base"
+    )
+    connection.execute(
+        f"COPY (SELECT rec FROM ({records_query}) WHERE rec IS NOT NULL) "
+        f"TO {_sql_string(str(detail_path))} "
+        "(FORMAT CSV, HEADER FALSE, DELIMITER '|', QUOTE '', ESCAPE '')"
+    )
     run_log.phase_done(dataset_id, "details", started)
     return matched, sas_only, python_only, order_mismatches
+
+
+_ABSENT_COLUMN_JSON = '{"type":"absent_column"}'
+
+
+def _sql_string(value: str) -> str:
+    """One single-quoted SQL string literal."""
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _present_cell(prefix: str, names: set[str]) -> Callable[[str], str | None]:
+    """Column expression for staged values the side carries, else None."""
+
+    def cell(name: str) -> str | None:
+        return quote_identifier(prefix + name) if name in names else None
+
+    return cell
+
+
+def _values_object(cell: Callable[[str], str | None], union: list[str]) -> str:
+    """json_object call embedding staged v_* envelopes verbatim as JSON.
+
+    `cell` maps a union column to its value expression, or None when the
+    column is absent from this side (then the absent_column envelope is
+    used).  Staged nulls become JSON null because json_object keeps the key
+    with a null value.
+    """
+    arguments: list[str] = []
+    for name in union:
+        expression = cell(name)
+        if expression is None:
+            arguments.append(
+                f"{_sql_string(name)}, CAST({_sql_string(_ABSENT_COLUMN_JSON)} AS JSON)"
+            )
+        else:
+            arguments.append(f"{_sql_string(name)}, CAST({expression} AS JSON)")
+    return "json_object(" + ", ".join(arguments) + ")"
+
+
+def _side_record(
+    side: str,
+    own_ordinal: str,
+    other_ordinal: str,
+    values: str,
+    diffs: str,
+    pair_id: str,
+    dataset_ref: str,
+) -> str:
+    """One JSON record expression per base row of `side`, or JSON NULL.
+
+    Rows without an own ordinal produce nothing; matched rows get the PASS
+    shape without differing_columns/pair_id keys, and one-sided rows get the
+    FAIL shape carrying the annotation columns of the matching side.
+    """
+    passed = (
+        "json_object('schema_version', 1, 'dataset_id', "
+        f"{dataset_ref}, 'side', '{side}', 'staging_row_number', {own_ordinal}, "
+        f"'status', 'PASS', 'reason', NULL, 'values', {values})"
+    )
+    failed = (
+        "json_object('schema_version', 1, 'dataset_id', "
+        f"{dataset_ref}, 'side', '{side}', 'staging_row_number', {own_ordinal}, "
+        f"'status', 'FAIL', 'reason', 'only_{side}', 'values', {values}, "
+        f"'differing_columns', CAST({diffs} AS JSON), "
+        f"'pair_id', {pair_id})"
+    )
+    return (
+        f"CASE WHEN {own_ordinal} IS NULL THEN CAST(NULL AS JSON) "
+        f"WHEN {other_ordinal} IS NOT NULL THEN {passed} ELSE {failed} END"
+    )
 
 
 def _annotated_pair_diffs(
@@ -338,38 +401,26 @@ def _join_stats(connection: duckdb.DuckDBPyConnection, equality: str) -> tuple[i
 
 
 def _absent_side_details(
+    connection: duckdb.DuckDBPyConnection,
     left: dict[str, Any],
     right: dict[str, Any],
     path: Path,
     dataset_id: str,
     union: list[str],
 ) -> None:
-    """Stream every row of both sides when no column is shared to compare."""
-    with path.open("w", encoding="utf-8") as output:
-        for side, item in (("sas", left), ("python", right)):
-            source = pq.ParquetFile(item["path"])  # type: ignore[no-untyped-call]
-            source_columns = tuple(item["columns"])
-            for batch in source.iter_batches(batch_size=1024):  # type: ignore[no-untyped-call]
-                for row in batch.to_pylist():
-                    values: dict[str, Any] = {}
-                    for name in union:
-                        if name not in source_columns:
-                            values[name] = {"type": "absent_column"}
-                            continue
-                        encoded = row[f"v_{name}"]
-                        values[name] = json.loads(encoded) if encoded is not None else None
-                    output.write(
-                        json.dumps(
-                            {
-                                "schema_version": 1,
-                                "dataset_id": dataset_id,
-                                "side": side,
-                                "staging_row_number": int(row["ordinal"]),
-                                "status": "FAIL",
-                                "reason": "only_sas" if side == "sas" else "only_python",
-                                "values": values,
-                            },
-                            separators=(",", ":"),
-                        )
-                        + "\n"
-                    )
+    """Export every row of both sides when no column is shared to compare."""
+    dataset_ref = _sql_string(dataset_id)
+    selects: list[str] = []
+    for side, item in (("sas", left), ("python", right)):
+        values = _values_object(_present_cell("v_", set(item["columns"])), union)
+        selects.append(
+            "SELECT json_object('schema_version', 1, 'dataset_id', "
+            f"{dataset_ref}, 'side', '{side}', 'staging_row_number', source.ordinal, "
+            f"'status', 'FAIL', 'reason', 'only_{side}', 'values', {values}) AS rec "
+            f"FROM read_parquet({_sql_string(str(item['path']))}) AS source"
+        )
+    connection.execute(
+        "COPY (SELECT rec FROM (" + " UNION ALL ".join(selects) + ")) "
+        f"TO {_sql_string(str(path))} "
+        "(FORMAT CSV, HEADER FALSE, DELIMITER '|', QUOTE '', ESCAPE '')"
+    )

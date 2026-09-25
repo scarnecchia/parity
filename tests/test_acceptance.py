@@ -1262,6 +1262,28 @@ def test_html_escaping(tmp_path: Path) -> None:
     assert "<img src=x>" not in html
 
 
+def test_duckdb_json_record_export_contract(tmp_path: Path) -> None:
+    """Pin the DuckDB behaviors the native detail writer depends on."""
+    import duckdb
+
+    connection = duckdb.connect()
+    ordered = connection.execute(
+        "SELECT json_object('z', 1, 'a', CAST('{\"k\": [1, 2]}' AS JSON), "
+        "'n', CAST(NULL AS JSON), 't', 'caf\u00e9')"
+    ).fetchone()[0]
+    # Argument order is kept; JSON values embed compactly with order kept;
+    # SQL NULL becomes a JSON null key; strings escape and stay UTF-8.
+    assert ordered == '{"z":1,"a":{"k":[1,2]},"n":null,"t":"caf\u00e9"}'
+    lines = tmp_path / "lines.jsonl"
+    connection.execute(
+        "COPY (SELECT json_object('a', 1) AS rec FROM range(2)) TO ? "
+        "(FORMAT CSV, HEADER FALSE, DELIMITER '|', QUOTE '', ESCAPE '')",
+        [str(lines)],
+    )
+    # Single-column CSV export with quoting disabled writes raw NDJSON lines.
+    assert lines.read_text(encoding="utf-8").splitlines() == ['{"a":1}', '{"a":1}']
+
+
 def _load_golden(name: str) -> dict[str, object]:
     import gzip
 
