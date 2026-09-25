@@ -64,6 +64,12 @@ Relative paths explicitly set in TOML resolve from the config file's directory. 
 
 DuckDB validates the resource-limit strings. These settings limit DuckDB execution, not total process memory or all temporary disk use: Polars, Arrow, Python, and the OS use additional resources. The private run directory is cleaned up when the run finishes or unwinds after an error or handled interruption.
 
+## Large runs
+
+- Place the run temp on real disk: `--temp-dir /path/on/disk`. If the run temp resolves onto a `tmpfs` mount (RAM-backed, common for `/tmp`), the run logs a `temp_on_tmpfs` event and prints a warning, because DuckDB spill files then consume RAM instead of disk. The run continues either way.
+- Size `memory_limit` to roughly 50–60% of machine RAM for large datasets (for example `"32GB"` on a 62 GB host); comparison joins spill to the temp directory beyond that. Raise `--max-temp-size` so the spill has room.
+- `--threads` scales DuckDB comparison work; 4 is a conservative default, and 8–16 helps on many-core hosts with the memory to match.
+
 ## Dataset discovery and pairing
 
 - Both roots must contain readable directories named `dplocal` and `msoc`.

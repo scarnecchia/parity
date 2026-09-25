@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import sys
 import tempfile
 import time
 import uuid
@@ -55,6 +56,7 @@ def _execute(config: RunConfig) -> int:
         round_digits=config.round_digits,
         temp_dir=str(config.temp_dir) if config.temp_dir else None,
     )
+    _warn_on_tmpfs_temp(config)
     validate_roots_and_output(config)
     for root in (config.sas_root, config.python_root):
         if not root.is_dir() or not os.access(root, os.R_OK):
@@ -346,6 +348,44 @@ def _versions() -> dict[str, str]:
         name: version(name)
         for name in ("sentinel-parity", "polars-readstat", "polars", "pyarrow", "duckdb", "jinja2")
     }
+
+
+def _mount_entries() -> list[tuple[str, str]]:
+    """(mount point, filesystem type) pairs; empty where /proc is absent."""
+    try:
+        text = Path("/proc/mounts").read_text(encoding="utf-8")
+    except OSError:
+        return []
+    entries: list[tuple[str, str]] = []
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) >= 3:
+            entries.append((parts[1].replace("\\040", " "), parts[2]))
+    return entries
+
+
+def _is_tmpfs(path: Path, entries: list[tuple[str, str]] | None = None) -> bool:
+    """True when the deepest mount covering path is a tmpfs filesystem."""
+    if entries is None:
+        entries = _mount_entries()
+    covering = [(mount, fstype) for mount, fstype in entries if path.is_relative_to(mount)]
+    if not covering:
+        return False
+    mount, fstype = max(covering, key=lambda entry: len(entry[0]))
+    return fstype == "tmpfs"
+
+
+def _warn_on_tmpfs_temp(config: RunConfig) -> None:
+    """Log and hint once when the run's temp base spills onto RAM-backed tmpfs."""
+    base = config.temp_dir.resolve() if config.temp_dir else Path(tempfile.gettempdir())
+    if not _is_tmpfs(base):
+        return
+    run_log.event("temp_on_tmpfs", temp_dir=str(base), filesystem="tmpfs")
+    print(
+        f"warning: run temp directory {base} is on tmpfs, so DuckDB spill "
+        "counts against RAM; pass --temp-dir to place the run temp on real disk",
+        file=sys.stderr,
+    )
 
 
 def _row_count(path: str, kind: str) -> int:

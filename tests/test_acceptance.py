@@ -541,6 +541,7 @@ def test_run_log_jsonl_verbose_and_short_options(tmp_path: Path) -> None:
         "publish_start": {"ts", "elapsed_s", "event", "datasets", "details"},
         "publish_done": {"ts", "elapsed_s", "event", "report"},
         "run_done": {"ts", "elapsed_s", "event", "status", "datasets"},
+        "temp_on_tmpfs": {"ts", "elapsed_s", "event", "temp_dir", "filesystem"},
     }
     for record in events:
         assert set(record) == allowed_keys[record["event"]]
@@ -1644,6 +1645,58 @@ def test_row_conservation_invariant_is_enforced(
     assert dataset["reason"] == "RuntimeError"
     assert dataset["detail_complete"] is False
     assert dataset["id"] not in summary["detail_links"]
+
+
+def test_is_tmpfs_picks_deepest_mount() -> None:
+    from sentinel_parity.runner import _is_tmpfs
+
+    entries = [("/", "ext4"), ("/tmp", "tmpfs"), ("/tmp/scratch", "ext4")]
+    assert _is_tmpfs(Path("/tmp/run"), entries)
+    assert not _is_tmpfs(Path("/tmp/scratch/run"), entries)
+    assert not _is_tmpfs(Path("/home/run"), entries)
+    assert not _is_tmpfs(Path("/home/run"), [])
+
+
+def test_tmpfs_temp_warning(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import sentinel_parity.runner as runner_module
+
+    sas, python = _roots(tmp_path)
+    fixture = Path(__file__).resolve().parents[1] / ".parity-fixtures" / "productsales.sas7bdat"
+    shutil.copyfile(fixture, sas / "dplocal" / "matched.sas7bdat")
+    polars_readstat.ScanReadstat(
+        str(sas / "dplocal" / "matched.sas7bdat")
+    ).df.collect().write_parquet(python / "dplocal" / "matched.parquet")
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    args = [
+        "run",
+        "-s",
+        str(sas),
+        "-p",
+        str(python),
+        "--temp-dir",
+        str(temp),
+    ]
+    monkeypatch.setattr(
+        runner_module,
+        "_mount_entries",
+        lambda: [(str(tmp_path.parent), "ext4"), (str(tmp_path), "tmpfs")],
+    )
+    result = runner.invoke(app, args + ["-o", str(tmp_path / "out")])
+    assert result.exit_code == 0
+    assert "--temp-dir" in result.stderr
+    events = [
+        json.loads(line) for line in (tmp_path / "out" / "run.jsonl").read_text().splitlines()
+    ]
+    event = next(record for record in events if record["event"] == "temp_on_tmpfs")
+    assert set(event) == {"ts", "elapsed_s", "event", "temp_dir", "filesystem"}
+    assert event["filesystem"] == "tmpfs"
+    monkeypatch.setattr(runner_module, "_mount_entries", lambda: [(str(tmp_path.parent), "ext4")])
+    real = tmp_path / "real"
+    result = runner.invoke(app, args + ["-o", str(real)])
+    assert result.exit_code == 0
+    assert "--temp-dir" not in result.stderr
+    assert "temp_on_tmpfs" not in (real / "run.jsonl").read_text(encoding="utf-8")
 
 
 def test_resource_exhaustion_is_error(tmp_path: Path) -> None:
