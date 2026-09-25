@@ -16,7 +16,7 @@ import polars as pl
 from sentinel_parity.core.value_encoding import canonical_key
 
 _SIGNED_INTS = (pl.Int8, pl.Int16, pl.Int32, pl.Int64)
-_EPOCH_SCALES = {"s": 1_000_000_000, "ms": 1_000_000, "us": 1_000, "ns": 1}
+_EPOCH_SCALES = {"ms": 1_000_000, "us": 1_000, "ns": 1}
 
 # den = 2**k must fit Int128 (whose maximum is 2**127 - 1).
 _BIGGEST_DEN_EXPONENT = 126
