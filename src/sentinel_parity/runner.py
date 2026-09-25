@@ -455,7 +455,8 @@ def _write_single_side_failure(
                 parts.append(pl.lit(payloads))
             parts.append(pl.lit("}}"))
             lines = batch.select(pl.concat_str(*parts).alias("line")).to_series()
-            output.write("\n".join(lines.to_list()) + "\n")
+            if lines.len():
+                output.write("\n".join(lines.to_list()) + "\n")
             ordinal += batch.height
 
 

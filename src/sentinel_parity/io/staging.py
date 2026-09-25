@@ -145,7 +145,9 @@ def _temporal_encode(series: pl.Series) -> tuple[pl.Series, pl.Series]:
 
     Envelope values format from the column's own precision (nanosecond
     fraction padded to nine digits, aware instants converted to UTC), so
-    even sub-1970 or year-9999 values stay exact.
+    even sub-1970 or year-9999 values stay exact.  Beyond year 9999 chrono
+    renders its expanded-year form (leading +, six-digit year); the old
+    scalar path raised there instead.
     """
     keys = canonical_keys(series, None)
     dtype = series.dtype
@@ -278,8 +280,10 @@ def stage(
         for normal_name in ordered:
             series = batch_frame.get_column(by_normal[normal_name]).rename(normal_name)
             keys, payloads = _encode_column(series, round_digits)
-            arrays.append(keys.to_arrow())
-            arrays.append(payloads.to_arrow())
+            # Polars renders Utf8 as large_string; the declared schema keeps
+            # the physical type string, so the cast here is explicit.
+            arrays.append(keys.to_arrow().cast(pa.string()))
+            arrays.append(payloads.to_arrow().cast(pa.string()))
             fields.extend(
                 (
                     pa.field(f"k_{normal_name}", pa.string()),

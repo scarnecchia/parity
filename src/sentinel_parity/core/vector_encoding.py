@@ -33,6 +33,10 @@ def vector_keys(values: pl.Series, round_digits: int | None) -> tuple[pl.Series,
     values are keyed "null" in-vector, never residual.  `None` means the
     dtype has no exact builder and the whole column takes the scalar path.
     """
+    if round_digits is not None and round_digits < 1:
+        # The integer fast paths are only round-invariant for positive digit
+        # counts; RunConfig rejects anything else at the CLI boundary.
+        raise ValueError("round_digits must be a positive integer")
     dtype = values.dtype
     if dtype == pl.Boolean or dtype in _SIGNED_INTS:
         return _integer_keys(values), _no_residual(len(values))
