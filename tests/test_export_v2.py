@@ -130,6 +130,20 @@ def test_paired_mismatch_preserves_json_null_cell(tmp_path: Path) -> None:
     assert difference["python"]["value"] == "text"
 
 
+def test_workbook_text_marks_present_null_not_absent_row(tmp_path: Path) -> None:
+    stage_path = tmp_path / "workbook.parquet"
+    _compare(
+        tmp_path,
+        {"id": [1], "value": [None]},
+        {"id": [1], "value": ["text"]},
+        workbook_stage_path=stage_path,
+        workbook_remaining={"rows": 10, "rows_per_dataset": 10, "bytes": 10_000, "sheets": 5},
+    )
+    staged = pl.read_parquet(stage_path)
+    sas_cell = staged.filter(pl.col("column") == "value")["sas"][0]
+    assert sas_cell == "(missing)"
+
+
 def test_type_only_crossed_differences_warn(tmp_path: Path) -> None:
     result = _compare(tmp_path, {"number": [1]}, {"number": ["2"]})
     assert result["status"] == "WARN"
@@ -137,25 +151,45 @@ def test_type_only_crossed_differences_warn(tmp_path: Path) -> None:
 
 
 def test_workbook_policy() -> None:
-    assert excel_omissions(WorkbookMeasurements(1, 4, 5, 2), ExcelLimits(rows=0)) == ("row_limit",)
-    assert (
-        excel_omissions(WorkbookMeasurements(1, 4, 5, 2), ExcelLimits(enabled=False, rows=0)) == ()
+    measurements = WorkbookMeasurements(
+        rows=1, text_bytes=4, max_cell_chars=5, sheets=2, max_rows_per_sheet=1
     )
-    assert excel_omissions(
-        WorkbookMeasurements(1_048_575, 4, 5, 2),
-        ExcelLimits(rows=1_048_576, rows_per_sheet=1_048_574),
-    ) == ("sheet_row_limit",)
+    assert excel_omissions(measurements, ExcelLimits(rows=0)) == ("row_limit",)
+    assert excel_omissions(measurements, ExcelLimits(enabled=False, rows=0)) == ()
+    limits = ExcelLimits(rows=100, rows_per_sheet=7)
+    # The per-sheet budget bounds each dataset sheet, never the run total:
+    # two datasets of 6 rows stay eligible although the total exceeds 7.
     assert (
         excel_omissions(
-            WorkbookMeasurements(1_048_575, 4, 5, 2),
-            ExcelLimits(rows=1_048_576, rows_per_sheet=1_048_575),
+            WorkbookMeasurements(
+                rows=12, text_bytes=4, max_cell_chars=5, sheets=3, max_rows_per_sheet=6
+            ),
+            limits,
         )
         == ()
     )
+    assert excel_omissions(
+        WorkbookMeasurements(
+            rows=12, text_bytes=4, max_cell_chars=5, sheets=3, max_rows_per_sheet=8
+        ),
+        limits,
+    ) == ("sheet_row_limit",)
+    assert excel_omissions(
+        WorkbookMeasurements(
+            rows=1_048_575, text_bytes=4, max_cell_chars=5, sheets=2, max_rows_per_sheet=1_048_576
+        ),
+        ExcelLimits(rows=1_048_576, rows_per_sheet=2_000_000),
+    ) == ("sheet_row_limit",)
     assert (
         excel_omissions(
-            WorkbookMeasurements(1_048_575, 4, 5, 2),
-            ExcelLimits(rows=1_048_576, rows_per_sheet=1_048_576),
+            WorkbookMeasurements(
+                rows=1_048_575,
+                text_bytes=4,
+                max_cell_chars=5,
+                sheets=2,
+                max_rows_per_sheet=1_048_575,
+            ),
+            ExcelLimits(rows=1_048_576, rows_per_sheet=1_048_575),
         )
         == ()
     )

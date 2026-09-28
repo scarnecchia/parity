@@ -29,6 +29,7 @@ class WorkbookMeasurements:
     text_bytes: int
     max_cell_chars: int
     sheets: int
+    max_rows_per_sheet: int
 
 
 def excel_omissions(measurements: WorkbookMeasurements, limits: ExcelLimits) -> tuple[str, ...]:
@@ -40,7 +41,7 @@ def excel_omissions(measurements: WorkbookMeasurements, limits: ExcelLimits) -> 
         reasons.append("sheet_limit")
     if measurements.rows > min(limits.rows, 1_048_575):
         reasons.append("row_limit")
-    if measurements.rows > min(limits.rows_per_sheet, 1_048_575):
+    if measurements.max_rows_per_sheet > min(limits.rows_per_sheet, 1_048_575):
         reasons.append("sheet_row_limit")
     if measurements.text_bytes > limits.bytes:
         reasons.append("byte_limit")

@@ -146,7 +146,7 @@ def compare(
             if not workbook_stage_reasons:
                 connection.execute(
                     "COPY (SELECT pair_rank AS pair_id,column_name AS column,"
-                    "CASE WHEN sas IS NULL THEN '(no row)' "
+                    "CASE WHEN kind='only_python' THEN '(no row)' "
                     "WHEN json_extract(sas,'$.value') IS NULL THEN '(missing)' "
                     "WHEN json_extract_string(sas,'$.canonical')='null' "
                     "OR (json_extract_string(sas,'$.type')='string' "
@@ -154,7 +154,7 @@ def compare(
                     "THEN coalesce(json_extract_string(sas,'$.value'),'') || "
                     "' (compares as missing)' "
                     "ELSE json_extract_string(sas,'$.value') END AS sas,"
-                    "CASE WHEN python IS NULL THEN '(no row)' "
+                    "CASE WHEN kind='only_sas' THEN '(no row)' "
                     "WHEN json_extract(python,'$.value') IS NULL THEN '(missing)' "
                     "WHEN json_extract_string(python,'$.canonical')='null' "
                     "OR (json_extract_string(python,'$.type')='string' "
@@ -488,7 +488,7 @@ def _all_pair_differences_crossed(
 def _workbook_measurements(connection: duckdb.DuckDBPyConnection) -> dict[str, int]:
     # Keep these projections identical to the values written to workbook Parquet.
     sas_text = (
-        "CASE WHEN sas IS NULL THEN '(no row)' "
+        "CASE WHEN kind='only_python' THEN '(no row)' "
         "WHEN json_extract(sas,'$.value') IS NULL THEN '(missing)' "
         "WHEN json_extract_string(sas,'$.canonical')='null' "
         "OR (json_extract_string(sas,'$.type')='string' "
@@ -497,7 +497,7 @@ def _workbook_measurements(connection: duckdb.DuckDBPyConnection) -> dict[str, i
         "ELSE json_extract_string(sas,'$.value') END"
     )
     python_text = (
-        "CASE WHEN python IS NULL THEN '(no row)' "
+        "CASE WHEN kind='only_sas' THEN '(no row)' "
         "WHEN json_extract(python,'$.value') IS NULL THEN '(missing)' "
         "WHEN json_extract_string(python,'$.canonical')='null' "
         "OR (json_extract_string(python,'$.type')='string' "

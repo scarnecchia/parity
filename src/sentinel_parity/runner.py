@@ -169,13 +169,16 @@ def _execute(config: RunConfig) -> int:
                 details[ident] = Path(result["details_path"])
                 stage_reasons = result["workbook_stage_reasons"]
                 if stage_reasons and not workbook_reasons:
-                    workbook_reasons.extend(
-                        {
-                            "code": reason.split(":", 1)[0],
-                            "dataset_id": reason.split(":", 1)[1] if ":" in reason else ident,
-                        }
-                        for reason in stage_reasons
-                    )
+                    # Run-level budgets are reported with a null dataset id; only
+                    # sheet_row_limit names the dataset that tripped the gate.
+                    for reason in stage_reasons:
+                        code, _, attributed = reason.partition(":")
+                        workbook_reasons.append(
+                            {
+                                "code": code,
+                                "dataset_id": attributed if code == "sheet_row_limit" else None,
+                            }
+                        )
                     for leftover in workbook_stage_paths:
                         leftover.unlink(missing_ok=True)
                     workbook_stage_paths.clear()
@@ -314,8 +317,16 @@ def _execute(config: RunConfig) -> int:
             ),
         )
         workbook_sheets = 1 + len(staged_datasets)
+        workbook_max_sheet_rows = max(
+            (int(item.get("workbook_measurements", {}).get("rows", 0)) for item in datasets),
+            default=0,
+        )
         workbook_measurements = WorkbookMeasurements(
-            workbook_rows, workbook_bytes, workbook_max_cell, workbook_sheets
+            workbook_rows,
+            workbook_bytes,
+            workbook_max_cell,
+            workbook_sheets,
+            workbook_max_sheet_rows,
         )
         excel_limits = ExcelLimits(
             config.excel,

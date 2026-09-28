@@ -94,6 +94,34 @@ def test_excel_disabled_no_differences_and_omission(tmp_path: Path) -> None:
     assert "omitted" in (out3 / "index.html").read_text()
 
 
+def _second_pair(sas: Path, python: Path) -> None:
+    shutil.copyfile(FIXTURE, sas / "msoc" / "second.sas7bdat")
+    frame = pl.read_parquet(python / "dplocal" / "source.parquet")
+    frame.write_parquet(python / "msoc" / "second.parquet")
+
+
+def test_excel_rows_per_sheet_bounds_datasets_not_run_total(tmp_path: Path) -> None:
+    sas, python = _inputs(tmp_path)
+    _second_pair(sas, python)
+    probe = tmp_path / "probe"
+    assert _run(sas, python, probe) == 1
+    sheet_rows = [
+        item["workbook_measurements"]["rows"]
+        for item in json.loads((probe / "summary.json").read_text())["datasets"]
+    ]
+    assert len(sheet_rows) == 2 and all(rows > 0 for rows in sheet_rows)
+    limit = max(sheet_rows)
+    assert sum(sheet_rows) > limit
+
+    sas2, python2 = _inputs(tmp_path / "bounded")
+    _second_pair(sas2, python2)
+    out = tmp_path / "bounded-out"
+    assert _run(sas2, python2, out, excel_max_rows_per_sheet=limit) == 1
+    excel = json.loads((out / "summary.json").read_text())["excel"]
+    assert excel["status"] == "generated"
+    assert (out / "differences.xlsx").is_file()
+
+
 def test_excel_rejection_never_invokes_writer_or_leaves_stage(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
