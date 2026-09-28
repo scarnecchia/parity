@@ -160,6 +160,7 @@ def _execute(config: RunConfig) -> int:
                     threads=config.threads,
                     preview_rows=config.preview_rows,
                     preview_cell_chars=config.preview_cell_chars,
+                    pair_keys=config.pair_keys,
                     workbook_stage_path=(
                         dataset_work / "workbook.parquet"
                         if config.excel and not workbook_reasons
@@ -237,6 +238,7 @@ def _execute(config: RunConfig) -> int:
                         "differing_pair_count": pair_count,
                         "difference_row_count": difference_count,
                         "details_bytes": details_bytes,
+                        "pair_keys": result["pair_keys"],
                         "preview_truncation": truncation,
                         "workbook_measurements": result["workbook_measurements"],
                         "detail_complete": True,

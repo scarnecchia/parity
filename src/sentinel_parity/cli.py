@@ -53,6 +53,16 @@ def run_command(
         int | None, typer.Option("--preview-total-max-bytes")
     ] = None,
     preview_cell_chars: Annotated[int | None, typer.Option("--preview-cell-chars")] = None,
+    pair_keys: Annotated[
+        str | None,
+        typer.Option(
+            "--pair-keys",
+            help=(
+                "Comma-separated shared columns that order the diagnostic row pairing first. "
+                "Comparison pass/fail semantics are unchanged."
+            ),
+        ),
+    ] = None,
     excel: Annotated[bool | None, typer.Option("--excel/--no-excel")] = None,
     excel_max_sheets: Annotated[int | None, typer.Option("--excel-max-sheets")] = None,
     excel_max_rows: Annotated[int | None, typer.Option("--excel-max-rows")] = None,
@@ -93,6 +103,11 @@ def run_command(
                 "preview_max_bytes": preview_max_bytes,
                 "preview_total_max_bytes": preview_total_max_bytes,
                 "preview_cell_chars": preview_cell_chars,
+                "pair_keys": (
+                    tuple(name.strip() for name in pair_keys.split(",") if name.strip())
+                    if pair_keys and pair_keys.strip()
+                    else None
+                ),
                 "excel": excel,
                 "excel_max_sheets": excel_max_sheets,
                 "excel_max_rows": excel_max_rows,

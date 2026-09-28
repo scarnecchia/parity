@@ -26,6 +26,7 @@ def _compare(
     *,
     workbook_stage_path: Path | None = None,
     workbook_remaining: dict[str, int] | None = None,
+    pair_keys: tuple[str, ...] = (),
 ) -> dict:
     for name in ("sas", "python", "compare"):
         (tmp_path / name).mkdir(parents=True)
@@ -44,6 +45,7 @@ def _compare(
         preview_rows=1,
         workbook_stage_path=workbook_stage_path,
         workbook_remaining=workbook_remaining,
+        pair_keys=pair_keys,
     )
 
 
@@ -166,6 +168,105 @@ def test_preview_marks_nbsp_only_text_as_missing(tmp_path: Path) -> None:
 def test_missing_whitespace_set_matches_python_rstrip() -> None:
     codes = sorted(int(item[4:-1]) for item in _WHITESPACE.split("||"))
     assert codes == sorted(cp for cp in range(0x110000) if chr(cp).rstrip() == "")
+
+
+def test_pair_keys_order_diagnostic_pairing(tmp_path: Path) -> None:
+    # Staging may reorder columns alphabetically, so the automatic order and
+    # the declared-key order must differ by name, not position: "a" sorts
+    # before "z", and declaring ("z",) flips the pairing priority.
+    left = {"a": [1, 2], "z": [2000, 1990]}
+    right = {"a": [1, 2], "z": [1990, 2000]}
+    automatic = _compare(tmp_path / "auto", left, right)
+    keyed = _compare(tmp_path / "keyed", left, right, pair_keys=("z",))
+
+    def paired_columns(result: dict) -> list[set[str]]:
+        records = [
+            json.loads(line)
+            for line in Path(result["details_path"]).read_text().splitlines()
+            if json.loads(line)["kind"] == "paired_mismatch"
+        ]
+        return [{item["column"] for item in record["differences"]} for record in records]
+
+    # Automatic ordering ranks by a first: excess rows pair on equal a and
+    # differ only in z.
+    assert all(columns == {"z"} for columns in paired_columns(automatic))
+    # Declared keys rank by z first: the same excess rows now pair on equal z
+    # and differ only in a.
+    assert keyed["pair_keys"] == ["z"]
+    assert all(columns == {"a"} for columns in paired_columns(keyed))
+
+
+def test_pair_keys_dropped_when_missing_from_shared_columns(tmp_path: Path) -> None:
+    result = _compare(
+        tmp_path,
+        {"g": [1, 2], "sas_extra": ["a", "b"]},
+        {"g": [2, 1], "py_extra": ["x", "y"]},
+        pair_keys=("g", "missing_col"),
+    )
+    assert result["pair_keys"] == ["g"]
+
+
+def test_report_explains_pairing_basis_flags_key_rows_and_reasons(tmp_path: Path) -> None:
+    row = {
+        "pair_id": 1,
+        "column": "group",
+        "sas": "west",
+        "python": "east",
+        "kind": "paired_mismatch",
+        "sas_row": 0,
+        "python_row": 0,
+    }
+    source = tmp_path / "details.jsonl"
+    source.write_text("", encoding="utf-8")
+    summary = {
+        "status": "FAIL",
+        "limits": {
+            "preview_rows": 4,
+            "preview_max_bytes": 1048576,
+            "preview_total_max_bytes": 10485760,
+        },
+        "excel": {
+            "status": "omitted",
+            "path": None,
+            "reasons": [
+                {"code": "row_limit", "dataset_id": None},
+                {"code": "sheet_row_limit", "dataset_id": "dataset-2"},
+            ],
+            "limits": {
+                "max_sheets": 100,
+                "max_rows": 100000,
+                "max_rows_per_sheet": 25000,
+                "max_bytes": 104857600,
+            },
+        },
+        "datasets": [
+            {
+                "id": "dataset-2",
+                "name": "dplocal/people",
+                "status": "FAIL",
+                "difference_row_count": 1,
+                "conditions": [],
+                "pair_keys": ["group"],
+            }
+        ],
+        "preview_truncation": {},
+    }
+    publish(tmp_path, summary, {}, {"dataset-2": [row]}, {"dataset-2": {}})
+    html = (tmp_path / "index.html").read_text()
+    assert "declared pairing keys (group), then remaining shared columns" in html
+    assert 'class="key-diff"' in html
+    assert "the run exceeds --excel-max-rows (100000 flat difference rows)" in html
+    assert (
+        "a dataset exceeds --excel-max-rows-per-sheet (25000 flat difference rows) — dplocal/people"
+        in html
+    )
+    assert "(dataset-2)" not in html
+
+    summary["datasets"][0]["pair_keys"] = []
+    publish(tmp_path / "auto", summary, {}, {"dataset-2": [row]}, {"dataset-2": {}})
+    auto_html = (tmp_path / "auto/index.html").read_text()
+    assert "ascending value order across all shared columns" in auto_html
+    assert 'class="key-diff"' not in auto_html
 
 
 def test_preview_marks_clipped_whitespace_only_text_as_missing(tmp_path: Path) -> None:

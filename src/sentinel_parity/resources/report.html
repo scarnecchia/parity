@@ -171,6 +171,8 @@ section h2 {
   font: 400 var(--text-sm)/1.5 var(--sans);
   color: var(--ink-muted);
 }
+.preview tr.key-diff td { background: var(--warn-bg); }
+.preview tr.key-diff td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
 .stat { display: flex; flex-direction: column; gap: 0.0625rem; min-width: 3.5rem; }
 .stat .label {
   font: 600 var(--text-xs)/1.4 var(--sans);
@@ -290,9 +292,22 @@ footer .build { font: var(--text-xs)/1.6 var(--mono); color: var(--ink-faint); o
 </style>
 </head>
 <body>
+{% macro workbook_reason_text(reason) -%}
+{%- set limits = summary.excel.limits -%}
+{%- if reason.code == "row_limit" %}the run exceeds --excel-max-rows ({{ limits["max_rows"] }} flat difference rows)
+{%- elif reason.code == "sheet_row_limit" %}a dataset exceeds --excel-max-rows-per-sheet ({{ limits["max_rows_per_sheet"] }} flat difference rows){% if reason.dataset_id %} — {{ dataset_names.get(reason.dataset_id, reason.dataset_id) }}{% endif %}
+{%- elif reason.code == "byte_limit" %}the run exceeds --excel-max-bytes ({{ limits["max_bytes"] }} bytes of cell text)
+{%- elif reason.code == "sheet_limit" %}more dataset sheets than --excel-max-sheets allows ({{ limits["max_sheets"] }})
+{%- elif reason.code == "cell_limit" %}a value exceeds Excel's 32,767-character cell limit
+{%- elif reason.code == "index_row_limit" %}too many datasets for the workbook Index sheet
+{%- else %}{{ reason.code }}{% if reason.dataset_id %} ({{ dataset_names.get(reason.dataset_id, reason.dataset_id) }}){% endif %}
+{%- endif %}
+{%- endmacro %}
+{% set dataset_names = {} %}
+{% for entry in summary.datasets %}{% set _ = dataset_names.update({entry.id: entry.name}) %}{% endfor %}
 <header class="masthead">
   <h1>Sentinel parity report</h1>
-  {% if summary.excel %}<p class="run-meta">Excel: {{ summary.excel.status }}{% if summary.excel.path %} · <a href="{{ summary.excel.path }}">Download workbook</a>{% elif summary.excel.reasons %} · {% for reason in summary.excel.reasons %}{{ reason.code }}{% if reason.dataset_id %} ({{ reason.dataset_id }}){% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}</p>{% endif %}
+  {% if summary.excel %}<p class="run-meta">Excel workbook: {{ summary.excel.status }}{% if summary.excel.path %} · <a href="{{ summary.excel.path }}">download differences.xlsx</a>{% elif summary.excel.reasons %} — omitted because {% for reason in summary.excel.reasons %}{{ workbook_reason_text(reason) }}{% if not loop.last %}, and {% endif %}{% endfor %}.{% endif %}</p>{% endif %}
   <div class="masthead-row">
     <span class="pill {{ summary.status }}">{{ summary.status }}</span>
     {% set statuses = summary.datasets|map(attribute='status')|list %}
@@ -384,6 +399,7 @@ footer .build { font: var(--text-xs)/1.6 var(--mono); color: var(--ink-faint); o
   {% endif %}
   {% set truncation = preview_truncation.get(dataset.id, {}) %}
   {% set preview_records = previews.get(dataset.id) or [] %}
+  {% set pairing_keys = dataset.get("pair_keys", []) %}
   {% if dataset.get("difference_row_count", 0) == 0 and dataset.status != "PASS" and dataset.get("conditions") %}
   <p class="preview-note">This dataset has schema or counterpart conditions but no value-difference rows.</p>
   {% endif %}
@@ -391,7 +407,7 @@ footer .build { font: var(--text-xs)/1.6 var(--mono); color: var(--ink-faint); o
   <div class="preview">
     <h3>Difference preview{% if truncation.get("omitted_rows", 0) %} — {{ truncation["omitted_rows"] }} difference rows omitted{% endif %}</h3>
     {% if preview_records %}
-    <p class="preview-note">Pairs are diagnostics, not proof of row correspondence. Values are clipped for display. The JSONL link contains the complete differences.</p>
+    <p class="preview-note">Rows are paired by {% if pairing_keys %}declared pairing keys ({{ pairing_keys|join(", ") }}), then remaining shared columns{% else %}ascending value order across all shared columns{% endif %}. Pairs are diagnostics, not proof of row correspondence.{% if pairing_keys %} A difference in a pairing key (outlined rows) usually means the paired rows are not the same entity.{% endif %} Values are clipped for display; the JSONL link has the complete differences.</p>
     <div class="table-scroll" role="region" tabindex="0" aria-label="Difference preview table">
       <table>
         <thead><tr>{% for label in workbook_columns %}<th scope="col">{{ label }}</th>{% endfor %}</tr></thead>

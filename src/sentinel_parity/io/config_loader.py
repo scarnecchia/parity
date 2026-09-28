@@ -23,6 +23,7 @@ _ALLOWED = {
     "preview_max_bytes",
     "preview_total_max_bytes",
     "preview_cell_chars",
+    "pair_keys",
     "excel",
     "excel_max_sheets",
     "excel_max_rows",
@@ -61,6 +62,13 @@ def load_config(config_path: Path | None, overrides: dict[str, Any]) -> RunConfi
             values[key] = _path(
                 values[key], base if key not in overrides or overrides[key] is None else Path.cwd()
             )
+    if "pair_keys" in values:
+        keys = values["pair_keys"]
+        if not isinstance(keys, (list, tuple)) or any(
+            not isinstance(key, str) or not key for key in keys
+        ):
+            raise ValueError("pair_keys must be a list of nonempty column names")
+        values["pair_keys"] = tuple(keys)
     for key in ("memory_limit", "max_temp_size"):
         if key in values and not isinstance(values[key], str):
             raise ValueError(f"{key} must be a string")

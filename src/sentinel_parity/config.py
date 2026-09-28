@@ -30,6 +30,7 @@ class RunConfig:
     preview_max_bytes: int = 1_048_576
     preview_total_max_bytes: int = 10_485_760
     preview_cell_chars: int = 512
+    pair_keys: tuple[str, ...] = ()
     excel: bool = True
     excel_max_sheets: int = 100
     excel_max_rows: int = 100_000
@@ -59,6 +60,11 @@ class RunConfig:
             )
         if not isinstance(self.excel, bool):
             raise ValueError("excel must be a boolean")
+        if self.pair_keys:
+            if any(not isinstance(key, str) or not key for key in self.pair_keys):
+                raise ValueError("pair_keys entries must be nonempty strings")
+            if len(set(self.pair_keys)) != len(self.pair_keys):
+                raise ValueError("pair_keys must not repeat a column")
         if self.round_digits is not None and (
             isinstance(self.round_digits, bool) or self.round_digits < 1
         ):

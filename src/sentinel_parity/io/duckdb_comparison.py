@@ -33,6 +33,7 @@ def compare(
     preview_cell_chars: int = 512,
     workbook_stage_path: Path | None = None,
     workbook_remaining: dict[str, int] | None = None,
+    pair_keys: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     work.mkdir(parents=True, exist_ok=True)
     artifact_id = uuid.uuid4().hex
@@ -72,6 +73,16 @@ def compare(
         sas_only_columns = [name for name in left_columns if name not in right_names]
         python_only_columns = [name for name in right_columns if name not in left_names]
         shared = [name for name in left_columns if name in right_names]
+        # Only declared keys that both sides share can order the pairing; the
+        # rest are reported so a typo or schema drift is visible.
+        shared_names = set(shared)
+        effective_pair_keys = [name for name in pair_keys if name in shared_names]
+        if pair_keys and len(effective_pair_keys) < len(pair_keys):
+            run_log.event(
+                "pair_keys_unused",
+                dataset=dataset_id,
+                keys=[name for name in pair_keys if name not in shared_names],
+            )
         union = left_columns + [name for name in right_columns if name not in left_names]
         detail_path = work / f"{artifact_id}.jsonl"
         conditions: list[dict[str, Any]] = []
@@ -104,6 +115,7 @@ def compare(
                 dataset_id,
                 preview_rows,
                 preview_cell_chars,
+                pair_keys=effective_pair_keys,
             )
             if sas_only or python_only:
                 crossed = [
@@ -180,6 +192,7 @@ def compare(
             "differing_pair_count": pair_count,
             "difference_row_count": difference_rows,
             "details_bytes": details_bytes,
+            "pair_keys": effective_pair_keys,
             "preview_rows": preview,
             "workbook_measurements": workbook_measurements,
             "workbook_stage_path": workbook_stage_path
@@ -203,6 +216,7 @@ def _compare_shared(
     dataset_id: str,
     preview_rows: int,
     cell_chars: int,
+    pair_keys: list[str],
 ) -> tuple[int, int, int, int]:
     keys = ", ".join(quote_identifier("k_" + name) for name in shared)
     for side in ("sas", "python"):
@@ -239,9 +253,12 @@ def _compare_shared(
         pair_sql = (
             f"CREATE TABLE {side}_pair AS SELECT *, "
             "row_number() OVER (ORDER BY "
-            + ", ".join(f"{quote_identifier('k_' + name)} ASC NULLS FIRST" for name in shared)
-            # Ordinal breaks ties between excess rows equal on every shared
-            # column so identical reruns pair identically.
+            # Declared pairing keys order the diagnostic pairing first; the
+            # remaining shared columns and the staging ordinal only break ties.
+            + ", ".join(
+                f"{quote_identifier('k_' + name)} ASC NULLS FIRST"
+                for name in pair_keys + [name for name in shared if name not in pair_keys]
+            )
             + ", ordinal) pair_rank "
             + f"FROM {side}_excess"
         )

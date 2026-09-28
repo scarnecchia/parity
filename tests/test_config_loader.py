@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from sentinel_parity.config import RunConfig
 from sentinel_parity.io.config_loader import load_config
 
 _LIMITS = (
@@ -67,3 +68,49 @@ def test_limit_loader_rejects_nonpositive_or_noninteger_toml(
 
     with pytest.raises(ValueError):
         load_config(config_path, {})
+
+
+def test_pair_keys_toml_list_becomes_tuple(tmp_path: Path) -> None:
+    config_path = tmp_path / "run.toml"
+    config_path.write_text(
+        'sas_root="sas"\npython_root="python"\npair_keys=["Group", "person_id"]\n',
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path, {})
+
+    assert config.pair_keys == ("Group", "person_id")
+
+
+def test_pair_keys_cli_override_replaces_toml(tmp_path: Path) -> None:
+    config_path = tmp_path / "run.toml"
+    config_path.write_text(
+        'sas_root="sas"\npython_root="python"\npair_keys=["Group"]\n',
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path, {"pair_keys": ("person_id",)})
+
+    assert config.pair_keys == ("person_id",)
+
+
+@pytest.mark.parametrize(
+    "rendered",
+    ['pair_keys="group"', "pair_keys=[1]", "pair_keys=['']"],
+)
+def test_pair_keys_loader_rejects_non_string_or_empty_entries(
+    tmp_path: Path, rendered: str
+) -> None:
+    config_path = tmp_path / "run.toml"
+    config_path.write_text(
+        f'sas_root="sas"\npython_root="python"\n{rendered}\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError):
+        load_config(config_path, {})
+
+
+def test_run_config_rejects_duplicate_pair_keys() -> None:
+    with pytest.raises(ValueError):
+        RunConfig(Path("sas"), Path("python"), pair_keys=("group", "group"))
