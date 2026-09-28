@@ -15,19 +15,171 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from sentinel_parity.core.names import normalize_columns
-from sentinel_parity.io.sas_input import stage_sas_input
-
-if TYPE_CHECKING:
-    from pathlib import Path
 from sentinel_parity.core.value_encoding import (
     canonical_key,
     rounded_display,
     temporal_ns_iso,
-    temporal_ns_key,
     typed_value,
 )
+from sentinel_parity.core.vector_encoding import canonical_keys, float_repr
+from sentinel_parity.io.sas_input import stage_sas_input
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 BATCH_ROWS = 65536
+
+# Strings needing JSON escapes ride the scalar path; everything else embeds
+# verbatim between quotes.
+_JSON_ESCAPABLE = r'["\\\x00-\x1f]'
+_SIGNED_INTS = (pl.Int8, pl.Int16, pl.Int32, pl.Int64)
+
+
+def _string_payloads(series: pl.Series) -> tuple[pl.Series, pl.Series]:
+    name = series.name
+    text = pl.col(name)
+    escapable = text.str.contains(_JSON_ESCAPABLE).fill_null(False)
+    payloads = (
+        series.to_frame()
+        .select(
+            pl.when(text.is_null())
+            .then(pl.lit("null"))
+            .when(escapable)
+            .then(None)
+            .otherwise(pl.concat_str(pl.lit('{"type":"string","value":"'), text, pl.lit('"}')))
+            .alias(name)
+        )
+        .to_series()
+    )
+    residual = (
+        series.to_frame()
+        .select((series.is_not_null() & escapable).fill_null(False).alias(name))
+        .to_series()
+    )
+    return payloads, residual
+
+
+def _payloads(
+    series: pl.Series, keys: pl.Series, round_digits: int | None
+) -> tuple[pl.Series, pl.Series]:
+    """Return envelope JSON strings and a mask of rows requiring scalar encoding."""
+    dtype = series.dtype
+    name = series.name
+    if dtype == pl.Boolean:
+        payloads = (
+            series.to_frame()
+            .select(
+                pl.when(pl.col(name).is_null())
+                .then(pl.lit("null"))
+                .when(pl.col(name))
+                .then(pl.lit('{"type":"boolean","value":true}'))
+                .otherwise(pl.lit('{"type":"boolean","value":false}'))
+                .alias(name)
+            )
+            .to_series()
+        )
+        return payloads, _no_residual(len(series))
+    if dtype in _SIGNED_INTS:
+        shown = pl.col(name).cast(pl.Int64).cast(pl.Utf8)
+        payloads = (
+            series.to_frame()
+            .select(
+                pl.when(pl.col(name).is_null())
+                .then(pl.lit("null"))
+                .otherwise(
+                    pl.concat_str(
+                        pl.lit('{"type":"int","value":"'),
+                        shown,
+                        pl.lit('","canonical":"n:'),
+                        shown,
+                        pl.lit('/1"}'),
+                    )
+                )
+                .alias(name)
+            )
+            .to_series()
+        )
+        return payloads, _no_residual(len(series))
+    if dtype in (pl.Float64, pl.Float32) and round_digits is None:
+        display = float_repr(series.cast(pl.Float64))
+        payloads = (
+            series.to_frame()
+            .select(
+                pl.when(pl.col(name).is_null())
+                .then(pl.lit("null"))
+                .otherwise(
+                    pl.concat_str(
+                        pl.lit('{"type":"float","value":"'),
+                        display,
+                        pl.lit('","canonical":"'),
+                        keys,
+                        pl.lit('"}'),
+                    )
+                )
+                .alias(name)
+            )
+            .to_series()
+        )
+        return payloads, _no_residual(len(series))
+    if dtype == pl.String:
+        return _string_payloads(series)
+    # Include null rows: _encode_scalar supplies their literal "null" payload.
+    return (
+        pl.Series(name, [None] * len(series), dtype=pl.Utf8),
+        pl.repeat(True, len(series), dtype=pl.Boolean, eager=True),
+    )
+
+
+def _no_residual(length: int) -> pl.Series:
+    return pl.repeat(False, length, dtype=pl.Boolean, eager=True)
+
+
+def _temporal_encode(series: pl.Series) -> tuple[pl.Series, pl.Series]:
+    """Encode temporals without precision loss or scalar fallback.
+
+    Payloads use nine fractional digits and UTC for aware instants. Beyond
+    year 9999, chrono uses expanded years (leading +, six digits).
+    """
+    keys = canonical_keys(series, None)
+    dtype = series.dtype
+    name = series.name
+    if dtype == pl.Date:
+        value = pl.col(name).dt.to_string("%Y-%m-%d")
+        shown = pl.concat_str(pl.lit('{"type":"date","value":"'), value, pl.lit('"}'))
+    else:
+        aware = dtype.time_zone is not None  # type: ignore[attr-defined]
+        base = pl.col(name).dt.convert_time_zone("UTC") if aware else pl.col(name)
+        shown = base.dt.to_string("%Y-%m-%dT%H:%M:%S%.9f")
+        if aware:
+            shown = pl.concat_str(shown, pl.lit("+00:00"))
+        shown = pl.concat_str(pl.lit('{"type":"timestamp","value":"'), shown, pl.lit('"}'))
+    payloads = (
+        series.to_frame()
+        .select(
+            pl.when(pl.col(name).is_not_null()).then(shown).otherwise(pl.lit("null")).alias(name)
+        )
+        .to_series()
+    )
+    return keys, payloads
+
+
+def _encode_column(series: pl.Series, round_digits: int | None) -> tuple[pl.Series, pl.Series]:
+    """Canonical keys and envelope payloads for one staged column."""
+    dtype = series.dtype
+    if dtype == pl.Date or isinstance(dtype, pl.Datetime):
+        return _temporal_encode(series)
+    keys = canonical_keys(series, round_digits)
+    payloads, residual = _payloads(series, keys, round_digits)
+    if residual.any():
+        rows = residual.arg_true()
+        payloads = payloads.scatter(
+            rows,
+            [
+                _encode_scalar(value, round_digits=round_digits)
+                for value in series.gather(rows).to_list()
+            ],
+        )
+    return keys, payloads
 
 
 def _encode_scalar(
@@ -105,34 +257,23 @@ def stage(
     progress_path = work / f"{artifact_id}.progress"
     for batch in parquet.iter_batches(batch_size=batch_size, columns=names):  # type: ignore[no-untyped-call]
         observed_max_batch_size = max(observed_max_batch_size, batch.num_rows)
-        arrays: list[pa.Array] = [pa.array(range(rows, rows + batch.num_rows), type=pa.int64())]
+        batch_frame = pl.from_arrow(pa.Table.from_batches([batch]))
+        if not isinstance(batch_frame, pl.DataFrame):  # pragma: no cover - from_arrow contract
+            raise TypeError("expected a DataFrame from the staged batch")
+        arrays: list[pa.Array] = [
+            batch_frame.select(
+                pl.arange(rows, rows + batch_frame.height, dtype=pl.Int64).alias("ordinal")
+            )
+            .to_series()
+            .to_arrow()
+        ]
         fields = [pa.field("ordinal", pa.int64())]
         for normal_name in ordered:
-            original = by_normal[normal_name]
-            index = names.index(original)
-            arrow_array = batch.column(index)
-            if pa.types.is_timestamp(arrow_array.type):
-                array_timezone_aware = arrow_array.type.tz is not None
-                epoch_values = arrow_array.cast(pa.int64()).to_pylist()
-                unit_scale = {"s": 1_000_000_000, "ms": 1_000_000, "us": 1_000, "ns": 1}
-                scale = unit_scale[arrow_array.type.unit]
-                epoch_ns_values = [
-                    None if value is None else value * scale for value in epoch_values
-                ]
-                keys = [
-                    "null" if value is None else temporal_ns_key(value) for value in epoch_ns_values
-                ]
-                payloads = [
-                    "null"
-                    if value is None
-                    else _encode_scalar(None, epoch_ns=value, timezone_aware=array_timezone_aware)
-                    for value in epoch_ns_values
-                ]
-            else:
-                values = arrow_array.to_pylist()
-                keys = [canonical_key(value, round_digits=round_digits) for value in values]
-                payloads = [_encode_scalar(value, round_digits=round_digits) for value in values]
-            arrays.extend((pa.array(keys, type=pa.string()), pa.array(payloads, type=pa.string())))
+            series = batch_frame.get_column(by_normal[normal_name]).rename(normal_name)
+            keys, payloads = _encode_column(series, round_digits)
+            # Polars emits large_string; the staging schema requires string.
+            arrays.append(keys.to_arrow().cast(pa.string()))
+            arrays.append(payloads.to_arrow().cast(pa.string()))
             fields.extend(
                 (
                     pa.field(f"k_{normal_name}", pa.string()),
@@ -143,7 +284,7 @@ def stage(
         if writer is None:
             writer = pq.ParquetWriter(canonical_path, table.schema, compression="zstd")  # type: ignore[no-untyped-call]
         writer.write_table(table)  # type: ignore[no-untyped-call]
-        rows += batch.num_rows
+        rows += batch_frame.height
         progress_path.write_text(str(rows), encoding="ascii")
     if writer:
         writer.close()  # type: ignore[no-untyped-call]

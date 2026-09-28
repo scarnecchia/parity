@@ -133,6 +133,22 @@ section h2 {
   color: var(--error);
   font: 400 var(--text-sm)/1.5 var(--sans);
 }
+.unmatched-flag {
+  margin: 0.875rem 0;
+  padding: 0.625rem 0.75rem;
+  border: 1px solid var(--fail);
+  border-radius: 0.25rem;
+  background: var(--fail-bg);
+  color: var(--fail);
+  font: 400 var(--text-sm)/1.5 var(--sans);
+}
+.unmatched-flag p { margin: 0; }
+.unmatched-flag ul { margin: 0.25rem 0 0; padding-left: 1.25rem; }
+.unmatched-flag .col-name {
+  font-family: var(--mono);
+  font-weight: 600;
+  color: var(--ink);
+}
 .type-note {
   margin: 0.75rem 0 0;
   font: 400 var(--text-sm)/1.5 var(--sans);
@@ -280,6 +296,17 @@ footer .build { font: var(--text-xs)/1.6 var(--mono); color: var(--ink-faint); o
   {% endfor %}
 </nav>
 {% endif %}
+{% set unmatched = summary.datasets|selectattr("reason", "equalto", "missing_counterpart")|list %}
+{% if unmatched %}
+<aside class="unmatched-flag">
+  <p><strong>Files without an equivalent</strong> — no same-named file exists on the other side, so these files were not read and none of their rows were compared:</p>
+  <ul>
+    {%- for dataset in unmatched %}
+    <li>{{ "SAS-only" if dataset.sas_rows is none else "Parquet-only" }}: <span class="col-name">{{ dataset.name }}</span></li>
+    {%- endfor %}
+  </ul>
+</aside>
+{% endif %}
 {% for dataset in summary.datasets %}
 {% set conditions = dataset.get("conditions") or [] %}
 <section id="dataset-{{ dataset.id }}">
@@ -305,7 +332,7 @@ footer .build { font: var(--text-xs)/1.6 var(--mono); color: var(--ink-faint); o
   {% for condition in conditions %}
   <p class="story">
     {%- if condition.reason == "missing_counterpart" -%}
-    No {{ "Parquet" if dataset.sas_rows else "SAS" }} counterpart was found for this dataset, so none of its rows can be compared.
+    No {{ "Parquet" if dataset.sas_rows is none else "SAS" }} counterpart was found for this dataset, so none of its rows can be compared. The file was not read, so its row count is not reported.
     {%- elif condition.reason == "sas_only_columns" -%}
     Parquet is missing {{ condition.columns|length }} column{{ "s" if condition.columns|length != 1 }} that SAS has ({{ column_list(condition.columns) }}), so no row can fully match.
     {%- elif condition.reason == "python_only_columns" -%}
@@ -332,7 +359,7 @@ footer .build { font: var(--text-xs)/1.6 var(--mono); color: var(--ink-faint); o
     {% for label, value, is_drift in stats %}
     <div class="stat">
       <span class="label">{{ label }}</span>
-      <span class="value {{ "drift" if is_drift and value else ("zero" if not value else "") }}">{{ value }}</span>
+      <span class="value {{ "drift" if is_drift and value else ("zero" if value == 0 else "") }}">{{ "—" if value is none else value }}</span>
     </div>
     {% endfor %}
   </div>

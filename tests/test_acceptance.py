@@ -1,4 +1,5 @@
 import csv
+import errno
 import hashlib
 import json
 import shutil
@@ -18,6 +19,7 @@ from sentinel_parity.cli import app
 from sentinel_parity.config import RunConfig
 from sentinel_parity.io.config_loader import load_config
 from sentinel_parity.io.discovery import discover
+from sentinel_parity.io.duckdb_comparison import compare
 from sentinel_parity.io.staging import stage
 from sentinel_parity.runner import run
 
@@ -440,6 +442,187 @@ def test_id_writes_reports_into_isolated_subfolders(tmp_path: Path) -> None:
     assert "empty" in rerun.stderr
 
 
+def test_run_log_jsonl_verbose_and_short_options(tmp_path: Path) -> None:
+    sas, python = _roots(tmp_path)
+    source = Path(__file__).resolve().parents[1] / ".parity-fixtures" / "productsales.sas7bdat"
+    shutil.copyfile(source, sas / "dplocal" / "data.sas7bdat")
+    polars_readstat.ScanReadstat(str(sas / "dplocal" / "data.sas7bdat")).df.collect().write_parquet(
+        python / "dplocal" / "data.parquet"
+    )
+    output = tmp_path / "out"
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "-s",
+            str(sas),
+            "-p",
+            str(python),
+            "-o",
+            str(output),
+            "--threads",
+            "5",
+            "--verbose",
+        ],
+    )
+    assert result.exit_code == 0
+    events = [
+        json.loads(line) for line in (output / "run.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    names = {record["event"] for record in events}
+    assert {
+        "run_start",
+        "discovery_done",
+        "dataset_start",
+        "dataset_done",
+        "compare_start",
+        "compare_phase",
+        "publish_start",
+        "publish_done",
+        "run_done",
+    } <= names
+    phases = {record["phase"] for record in events if record["event"] == "compare_phase"}
+    assert phases == {"load_tables", "rank", "multiset", "pairs", "details"}
+    start = next(record for record in events if record["event"] == "run_start")
+    assert start["threads"] == 5
+    allowed_keys = {
+        "run_start": {
+            "ts",
+            "elapsed_s",
+            "event",
+            "sas_root",
+            "python_root",
+            "output_dir",
+            "request_id",
+            "threads",
+            "memory_limit",
+            "max_temp_size",
+            "batch_size",
+            "preview_rows",
+            "round_digits",
+            "temp_dir",
+        },
+        "discovery_done": {
+            "ts",
+            "elapsed_s",
+            "event",
+            "sas_files",
+            "python_files",
+            "matched",
+            "sas_only",
+            "python_only",
+        },
+        "dataset_start": {"ts", "elapsed_s", "event", "dataset", "name"},
+        "dataset_done": {
+            "ts",
+            "elapsed_s",
+            "event",
+            "dataset",
+            "name",
+            "status",
+            "reason",
+            "matched",
+            "sas_only",
+            "python_only",
+            "order_mismatches",
+            "duration_s",
+        },
+        "compare_start": {
+            "ts",
+            "elapsed_s",
+            "event",
+            "dataset",
+            "sas_rows",
+            "python_rows",
+            "threads",
+            "memory_limit",
+            "max_temp_size",
+        },
+        "compare_phase": {"ts", "elapsed_s", "event", "dataset", "phase", "duration_s"},
+        "publish_start": {"ts", "elapsed_s", "event", "datasets", "details"},
+        "publish_done": {"ts", "elapsed_s", "event", "report"},
+        "run_done": {"ts", "elapsed_s", "event", "status", "datasets"},
+        "temp_on_tmpfs": {"ts", "elapsed_s", "event", "temp_dir", "filesystem"},
+    }
+    for record in events:
+        assert set(record) == allowed_keys[record["event"]]
+    summary = json.loads((output / "summary.json").read_text())
+    assert summary["limits"]["threads"] == 5
+    assert '"run_start"' in result.stderr
+    assert '"run_done"' in result.stderr
+
+
+def test_config_error_drains_jsonl_to_stderr(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        ["run", "-s", str(tmp_path / "missing"), "-p", str(tmp_path / "also-missing")],
+    )
+    assert result.exit_code == 2
+    assert '"run_start"' in result.stderr
+
+
+def test_verbose_failure_echoes_each_event_once(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        ["run", "-s", str(tmp_path / "missing"), "-p", str(tmp_path / "also"), "--verbose"],
+    )
+    assert result.exit_code == 2
+    assert result.stderr.count('"run_start"') == 1
+
+
+def test_threads_validation(tmp_path: Path) -> None:
+    config = tmp_path / "bad.toml"
+    config.write_text('sas_root="x"\npython_root="y"\nthreads=0\n')
+    with pytest.raises(ValueError, match="threads must be a positive integer"):
+        load_config(config, {})
+    config.write_text('sas_root="x"\npython_root="y"\nthreads="5"\n')
+    with pytest.raises(ValueError, match="threads must be an integer"):
+        load_config(config, {})
+    sas, python = _roots(tmp_path)
+    result = runner.invoke(app, ["run", "-s", str(sas), "-p", str(python), "--threads", "0"])
+    assert result.exit_code == 2
+    assert "threads must be a positive integer" in result.stderr
+
+
+def test_underscore_aliases_are_rejected(tmp_path: Path) -> None:
+    sas, python = _roots(tmp_path)
+    result = runner.invoke(app, ["run", "--sas_root", str(sas), "--python_root", str(python)])
+    assert result.exit_code == 2
+
+
+def test_oserror_console_and_log_show_errno(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sas, python = _roots(tmp_path)
+    source = Path(__file__).resolve().parents[1] / ".parity-fixtures" / "productsales.sas7bdat"
+    shutil.copyfile(source, sas / "dplocal" / "data.sas7bdat")
+    polars_readstat.ScanReadstat(str(sas / "dplocal" / "data.sas7bdat")).df.collect().write_parquet(
+        python / "dplocal" / "data.parquet"
+    )
+    out = tmp_path / "out"
+    import sentinel_parity.io.report_writer as report_writer
+
+    original_atomic_text = report_writer._atomic_text
+
+    def fail_html_write(path: Path, text: str) -> None:
+        if path.name == "index.html":
+            raise OSError(errno.ENOSPC, "No space left on device")
+        original_atomic_text(path, text)
+
+    monkeypatch.setattr(report_writer, "_atomic_text", fail_html_write)
+    result = runner.invoke(app, ["run", "-s", str(sas), "-p", str(python), "-o", str(out)])
+    assert result.exit_code == 2
+    assert "errno 28" in result.stderr
+    assert "No space left on device" in result.stderr
+    log = (out / "run.jsonl").read_text(encoding="utf-8")
+    assert '"errno": 28' in log
+    assert '"publish_error"' in log
+    rerun = runner.invoke(app, ["run", "-s", str(sas), "-p", str(python), "-o", str(out)])
+    assert rerun.exit_code == 2
+    assert "empty" in rerun.stderr
+    assert (out / "run.jsonl").read_text(encoding="utf-8") == log
+
+
 def test_invalid_config(tmp_path: Path) -> None:
     config = tmp_path / "bad.toml"
     config.write_text('sas_root="x"\npython_root="y"\nunknown=1\n')
@@ -510,7 +693,7 @@ def test_unreadable_input_root_exits_two(tmp_path: Path, monkeypatch: pytest.Mon
     assert "secret" not in result.stdout + result.stderr
 
 
-def test_one_sided_casefold_collision_is_error(tmp_path: Path) -> None:
+def test_one_sided_casefold_collision_is_not_validated(tmp_path: Path) -> None:
     import pyarrow as pa
     import pyarrow.parquet as pq
 
@@ -522,14 +705,17 @@ def test_one_sided_casefold_collision_is_error(tmp_path: Path) -> None:
     polars_readstat.ScanReadstat(str(sas / "msoc" / "matched.sas7bdat")).df.collect().write_parquet(
         python / "msoc" / "matched.parquet"
     )
-    assert run(RunConfig(sas, python, tmp_path / "out")) == 2
+    assert run(RunConfig(sas, python, tmp_path / "out")) == 1
     summary = json.loads((tmp_path / "out" / "summary.json").read_text())
     collision_dataset = next(
         item for item in summary["datasets"] if item["name"] == "dplocal/only.parquet"
     )
-    assert collision_dataset["status"] == "ERROR"
+    # The file is never opened, so its duplicate case-folded column names go
+    # undetected; the run flags it as missing a counterpart instead.
+    assert collision_dataset["status"] == "FAIL"
+    assert collision_dataset["reason"] == "missing_counterpart"
+    assert collision_dataset["python_rows"] is None
     assert collision_dataset["detail_complete"] is False
-    assert collision_dataset["reason"] == "ValueError"
 
 
 def test_installed_wheel_cli(tmp_path: Path) -> None:
@@ -555,7 +741,7 @@ def test_installed_wheel_cli(tmp_path: Path) -> None:
     )
     assert install.returncode == 0, install.stderr
     env = {**__import__("os").environ, "PYTHONPATH": str(target)}
-    for args, expected in ((["--help"], "run"), (["run", "--help"], "--sas_root")):
+    for args, expected in ((["--help"], "run"), (["run", "--help"], "--sas-root")):
         result = subprocess.run(
             [sys.executable, "-m", "sentinel_parity.cli", *args],
             cwd=tmp_path,
@@ -866,25 +1052,26 @@ def test_all_rows_fail_for_schema_or_missing_file(tmp_path: Path) -> None:
 
     sas2, python2 = _roots(tmp_path / "missing")
     shutil.copyfile(fixture, sas2 / "dplocal" / "only.sas7bdat")
-    readable = polars_readstat.ScanReadstat(str(sas2 / "dplocal" / "only.sas7bdat")).df.collect()
     shutil.copyfile(fixture, sas2 / "msoc" / "matched.sas7bdat")
     polars_readstat.ScanReadstat(
         str(sas2 / "msoc" / "matched.sas7bdat")
     ).df.collect().write_parquet(python2 / "msoc" / "matched.parquet")
     assert run(RunConfig(sas2, python2, tmp_path / "missing-out")) == 1
-    dataset, records = parse_details(tmp_path / "missing-out", "missing_counterpart")
-    assert dataset["reason"] == "missing_counterpart"
-    assert dataset["sas_rows"] == readable.height and dataset["python_rows"] == 0
-    assert dataset["detail_complete"] is True
-    assert len(records) == readable.height
-    assert all(
-        record["side"] == "sas" and record["reason"] == "missing_counterpart" for record in records
+    missing_summary = json.loads((tmp_path / "missing-out" / "summary.json").read_text())
+    assert missing_summary["schema_version"] == 2
+    dataset = next(
+        item for item in missing_summary["datasets"] if item["reason"] == "missing_counterpart"
     )
-    assert all(record["dataset_id"] == dataset["id"] for record in records)
-    assert all(
-        set(record["values"]) == {name.casefold() for name in readable.columns}
-        for record in records
-    )
+    assert dataset["status"] == "FAIL"
+    assert dataset["sas_rows"] is None and dataset["python_rows"] == 0
+    assert dataset["sas_only"] is None and dataset["python_only"] == 0
+    assert dataset["detail_complete"] is False
+    assert dataset["conditions"] == [{"severity": "FAIL", "reason": "missing_counterpart"}]
+    assert dataset["id"] not in missing_summary["detail_links"]
+    assert dataset["id"] not in missing_summary["preview_truncation"]
+    missing_html = (tmp_path / "missing-out" / "index.html").read_text()
+    assert "Files without an equivalent" in missing_html
+    assert "dplocal/only.sas7bdat" in missing_html
 
     sas3, python3 = _roots(tmp_path / "family")
     shutil.copyfile(fixture, sas3 / "dplocal" / "family.sas7bdat")
@@ -964,57 +1151,47 @@ def test_all_null_struct_extra_column_is_dataset_error(tmp_path: Path) -> None:
     assert dataset["detail_complete"] is False
 
 
-def test_one_sided_detail_values_use_typed_envelopes(tmp_path: Path) -> None:
-    from datetime import date
-
+def test_detail_values_use_typed_envelopes(tmp_path: Path) -> None:
     import pyarrow as pa
     import pyarrow.parquet as pq
 
     sas, python = _roots(tmp_path)
-    one_sided_path = python / "dplocal" / "only.parquet"
+    fixture = Path(__file__).resolve().parents[1] / ".parity-fixtures" / "productsales.sas7bdat"
+    shutil.copyfile(fixture, sas / "dplocal" / "typed.sas7bdat")
+    # Shared column names carrying types SAS cannot hold make every row an
+    # unmatched occurrence, so both sides land in the detail export with
+    # their typed envelopes intact.
+    typed_path = python / "dplocal" / "typed.parquet"
     _write_parquet(
-        one_sided_path,
+        typed_path,
         {
-            "amount": [float("nan"), 2.0],
-            "when": [date(2025, 1, 2), date(2025, 1, 3)],
-            "blob": [bytes([0, 255]), bytes([1, 2])],
+            "year": [float("nan"), float("nan")],
+            "quarter": [bytes([0, 255]), bytes([1, 2])],
         },
     )
-    original_table = pq.read_table(one_sided_path)
+    table = pq.read_table(typed_path)
     ns_values = pa.array(
         [1_234_567_891_234_567_890, 1_234_567_891_234_567_891], type=pa.timestamp("ns")
     )
-    pq.write_table(original_table.append_column("instant", ns_values), one_sided_path)
-    fixture = Path(__file__).resolve().parents[1] / ".parity-fixtures" / "productsales.sas7bdat"
-    shutil.copyfile(fixture, sas / "msoc" / "matched.sas7bdat")
-    polars_readstat.ScanReadstat(str(sas / "msoc" / "matched.sas7bdat")).df.collect().write_parquet(
-        python / "msoc" / "matched.parquet"
-    )
-    assert run(RunConfig(sas, python, tmp_path / "out", preview_rows=1)) == 1
+    pq.write_table(table.append_column("month", ns_values), typed_path)
+    assert run(RunConfig(sas, python, tmp_path / "out")) == 1
     summary = json.loads((tmp_path / "out" / "summary.json").read_text())
-    dataset = next(item for item in summary["datasets"] if item["reason"] == "missing_counterpart")
-    records = [
-        json.loads(line)
-        for line in (tmp_path / "out" / summary["detail_links"][dataset["id"]])
-        .read_text()
-        .splitlines()
-    ]
-    value = records[0]["values"]
-    assert records[0]["dataset_id"] == dataset["id"]
-    assert value["amount"] == {"type": "float", "value": "nan", "canonical": "null"}
-    assert value["when"] == {"type": "date", "value": "2025-01-02"}
-    assert value["blob"] == {"type": "binary", "value": "AP8="}
+    dataset = summary["datasets"][0]
+    assert dataset["matched_pairs"] == 0
+    detail_path = tmp_path / "out" / summary["detail_links"][dataset["id"]]
+    records = [json.loads(line) for line in detail_path.read_text().splitlines()]
+    assert {record["dataset_id"] for record in records} == {dataset["id"]}
     by_ordinal = {
-        record["staging_row_number"]: record["values"]["instant"]["value"] for record in records
+        record["staging_row_number"]: record["values"]
+        for record in records
+        if record["side"] == "python"
     }
-    assert by_ordinal == {
-        0: "2009-02-13T23:31:31.234567890",
-        1: "2009-02-13T23:31:31.234567891",
-    }
-    assert summary["preview_truncation"][dataset["id"]]["python"] == 1
-    html = (tmp_path / "out" / "index.html").read_text()
-    assert "omitted 1 Parquet mismatch" in html
-    assert "NaN" not in (tmp_path / "out" / summary["detail_links"][dataset["id"]]).read_text()
+    assert by_ordinal[0]["year"] == {"type": "float", "value": "nan", "canonical": "null"}
+    assert by_ordinal[0]["quarter"] == {"type": "binary", "value": "AP8="}
+    assert by_ordinal[1]["quarter"] == {"type": "binary", "value": "AQI="}
+    assert by_ordinal[0]["month"]["value"] == "2009-02-13T23:31:31.234567890"
+    assert by_ordinal[1]["month"]["value"] == "2009-02-13T23:31:31.234567891"
+    assert "NaN" not in detail_path.read_text()
 
 
 def test_jsonl_typed_values(tmp_path: Path) -> None:
@@ -1049,21 +1226,66 @@ def test_html_report_contract(tmp_path: Path) -> None:
 
 def test_preview_zero_still_shows_mismatch_counts(tmp_path: Path) -> None:
     sas, python = _roots(tmp_path)
-    _write_parquet(python / "dplocal" / "only.parquet", {"value": [1, 2]})
     fixture = Path(__file__).resolve().parents[1] / ".parity-fixtures" / "productsales.sas7bdat"
-    shutil.copyfile(fixture, sas / "msoc" / "matched.sas7bdat")
-    polars_readstat.ScanReadstat(str(sas / "msoc" / "matched.sas7bdat")).df.collect().write_parquet(
-        python / "msoc" / "matched.parquet"
-    )
+    shutil.copyfile(fixture, sas / "dplocal" / "data.sas7bdat")
+    frame = polars_readstat.ScanReadstat(str(sas / "dplocal" / "data.sas7bdat")).df.collect()
+    country = frame["COUNTRY"].to_list()
+    country[0] = "zzz-changed"
+    country[1] = "yyy-changed"
+    frame = frame.with_columns(pl.Series("COUNTRY", country))
+    frame.write_parquet(python / "dplocal" / "data.parquet")
     assert run(RunConfig(sas, python, tmp_path / "out", preview_rows=0)) == 1
     summary = json.loads((tmp_path / "out" / "summary.json").read_text())
-    one_sided = next(
-        item for item in summary["datasets"] if item["reason"] == "missing_counterpart"
-    )
-    assert summary["preview_truncation"][one_sided["id"]]["python"] == 2
+    dataset = next(item for item in summary["datasets"] if item["reason"] == "value_mismatch")
+    assert summary["preview_truncation"][dataset["id"]] == {"sas": 2, "python": 2}
     html = (tmp_path / "out" / "index.html").read_text()
-    assert "omitted 2 Parquet mismatches" in html
+    assert "omitted 2 SAS and 2 Parquet mismatches" in html
     assert "<table" not in html
+
+
+def test_one_sided_files_are_never_opened(tmp_path: Path) -> None:
+    sas, python = _roots(tmp_path)
+    (python / "dplocal" / "junk.parquet").write_bytes(b"definitely not parquet")
+    (sas / "msoc" / "junk.sas7bdat").write_bytes(b"definitely not sas7bdat")
+    fixture = Path(__file__).resolve().parents[1] / ".parity-fixtures" / "productsales.sas7bdat"
+    shutil.copyfile(fixture, sas / "dplocal" / "data.sas7bdat")
+    polars_readstat.ScanReadstat(str(sas / "dplocal" / "data.sas7bdat")).df.collect().write_parquet(
+        python / "dplocal" / "data.parquet"
+    )
+    assert run(RunConfig(sas, python, tmp_path / "out")) == 1
+    summary = json.loads((tmp_path / "out" / "summary.json").read_text())
+    one_sided = [item for item in summary["datasets"] if item["reason"] == "missing_counterpart"]
+    assert {item["name"] for item in one_sided} == {"dplocal/junk.parquet", "msoc/junk.sas7bdat"}
+    by_name = {item["name"]: item for item in one_sided}
+    assert by_name["dplocal/junk.parquet"]["sas_rows"] == 0
+    assert by_name["dplocal/junk.parquet"]["python_rows"] is None
+    assert by_name["msoc/junk.sas7bdat"]["sas_rows"] is None
+    assert by_name["msoc/junk.sas7bdat"]["python_rows"] == 0
+    assert all(item["status"] == "FAIL" and item["detail_complete"] is False for item in one_sided)
+    assert all(item["id"] not in summary["detail_links"] for item in one_sided)
+    assert all(item["id"] not in summary["preview_truncation"] for item in one_sided)
+    html = (tmp_path / "out" / "index.html").read_text()
+    assert "Files without an equivalent" in html
+    assert "dplocal/junk.parquet" in html and "msoc/junk.sas7bdat" in html
+    events = [
+        json.loads(line) for line in (tmp_path / "out" / "run.jsonl").read_text().splitlines()
+    ]
+    assert "dataset_error" not in {record["event"] for record in events}
+    done = next(
+        record
+        for record in events
+        if record["event"] == "dataset_done" and record["name"] == "dplocal/junk.parquet"
+    )
+    assert set(done) == {
+        "ts",
+        "elapsed_s",
+        "event",
+        "dataset",
+        "name",
+        "status",
+        "reason",
+        "duration_s",
+    }
 
 
 def test_html_escaping(tmp_path: Path) -> None:
@@ -1079,6 +1301,178 @@ def test_html_escaping(tmp_path: Path) -> None:
     html = (tmp_path / "out" / "index.html").read_text()
     assert r"\u003cimg src=x\u003e" in html
     assert "<img src=x>" not in html
+
+
+def test_duckdb_json_record_export_contract(tmp_path: Path) -> None:
+    """Pin the DuckDB behaviors the native detail writer depends on."""
+    import duckdb
+
+    connection = duckdb.connect()
+    ordered = connection.execute(
+        "SELECT json_object('z', 1, 'a', CAST('{\"k\": [1, 2]}' AS JSON), "
+        "'n', CAST(NULL AS JSON), 't', 'caf\u00e9')"
+    ).fetchone()[0]
+    # Argument order is kept; JSON values embed compactly with order kept;
+    # SQL NULL becomes a JSON null key; strings escape and stay UTF-8.
+    assert ordered == '{"z":1,"a":{"k":[1,2]},"n":null,"t":"caf\u00e9"}'
+    lines = tmp_path / "lines.jsonl"
+    connection.execute(
+        "COPY (SELECT json_object('a', 1) AS rec FROM range(2)) TO ? "
+        "(FORMAT CSV, HEADER FALSE, DELIMITER '|', QUOTE '', ESCAPE '')",
+        [str(lines)],
+    )
+    # Single-column CSV export with quoting disabled writes raw NDJSON lines.
+    assert lines.read_text(encoding="utf-8").splitlines() == ['{"a":1}', '{"a":1}']
+
+
+def test_detail_records_match_staged_values(tmp_path: Path) -> None:
+    """Check pairing against a Counter multiset diff of staged canonical keys.
+
+    Every emitted cell must equal its staged envelope verbatim.
+    """
+    import adversarial
+    import pyarrow.parquet as pq
+
+    def staged_rows(path: Path, work: Path) -> dict[int, dict[str, str | None]]:
+        work.mkdir(parents=True)
+        info = stage(path, "python", work)
+        table = pq.read_table(
+            info["path"],
+            columns=["ordinal", *[f"{p}{c}" for c in info["columns"] for p in ("k_", "v_")]],
+        )
+        data = {name: table.column(name).to_pylist() for name in table.column_names}
+        return {
+            ordinal: {name: data[name][index] for name in data if name != "ordinal"}
+            for index, ordinal in enumerate(data["ordinal"])
+        }
+
+    left_path = tmp_path / "left.parquet"
+    right_path = tmp_path / "right.parquet"
+    adversarial.write_adversarial(left_path, "a")
+    adversarial.write_adversarial(right_path, "b")
+    staged = {
+        "sas": staged_rows(left_path, tmp_path / "sl"),
+        "python": staged_rows(right_path, tmp_path / "sr"),
+    }
+    for part in ("l", "r", "cmp"):
+        (tmp_path / part).mkdir(parents=True, exist_ok=True)
+    left = stage(left_path, "python", tmp_path / "l")
+    right = stage(right_path, "python", tmp_path / "r")
+    result = compare(left, right, tmp_path / "cmp", "1GB", "10GB", "refadv")
+
+    shared = [name for name in left["columns"] if name in right["columns"]]
+    union = list(left["columns"]) + [
+        name for name in right["columns"] if name not in left["columns"]
+    ]
+
+    def key_of(side: str, ordinal: int) -> tuple[str | None, ...]:
+        row = staged[side][ordinal]
+        return tuple(row[f"k_{name}"] for name in shared)
+
+    counters = {
+        side: Counter(key_of(side, ordinal) for ordinal in staged[side])
+        for side in ("sas", "python")
+    }
+    excess_ordinals: dict[str, list[int]] = {}
+    for side, other in (("sas", "python"), ("python", "sas")):
+        remaining = counters[side] - counters[other]
+        # The implementation marks the highest occurrences per key as excess
+        # (occurrence numbers run in ordinal order), so consume from the end.
+        marked = []
+        for ordinal in sorted(staged[side], reverse=True):
+            key = key_of(side, ordinal)
+            if remaining[key] > 0:
+                remaining[key] -= 1
+                marked.append(ordinal)
+        excess_ordinals[side] = sorted(marked)
+
+    annotation: dict[tuple[str, int], tuple[list[str] | None, int | None]] = {}
+    pair_ranks = {
+        side: {ordinal: rank + 1 for rank, ordinal in enumerate(excess_ordinals[side])}
+        for side in ("sas", "python")
+    }
+    for sas_ordinal, python_ordinal in zip(
+        excess_ordinals["sas"], excess_ordinals["python"], strict=True
+    ):
+        diffs = [
+            name
+            for name in shared
+            if staged["sas"][sas_ordinal][f"k_{name}"]
+            != staged["python"][python_ordinal][f"k_{name}"]
+        ]
+        annotation[("sas", sas_ordinal)] = (diffs or None, pair_ranks["sas"][sas_ordinal])
+        annotation[("python", python_ordinal)] = (
+            diffs or None,
+            pair_ranks["python"][python_ordinal],
+        )
+
+    records = [json.loads(line) for line in Path(result["details_path"]).read_text().splitlines()]
+    records.sort(key=lambda record: (record["side"], record["staging_row_number"]))
+    assert len(records) == len(staged["sas"]) + len(staged["python"])
+    assert (result["matched"], result["sas_only"], result["python_only"]) == (
+        len(staged["sas"]) - len(excess_ordinals["sas"]),
+        len(excess_ordinals["sas"]),
+        len(excess_ordinals["python"]),
+    )
+    for record in records:
+        side = record["side"]
+        ordinal = record["staging_row_number"]
+        row = staged[side][ordinal]
+        side_columns = left["columns"] if side == "sas" else right["columns"]
+        for name in union:
+            if name not in side_columns:
+                expected_cell: object = {"type": "absent_column"}
+            else:
+                envelope = row[f"v_{name}"]
+                expected_cell = json.loads(envelope) if envelope is not None else None
+            assert record["values"][name] == expected_cell, (side, ordinal, name)
+        if ordinal in excess_ordinals[side]:
+            diffs, pair_id = annotation[(side, ordinal)]
+            assert record["status"] == "FAIL"
+            assert record["reason"] == f"only_{side}"
+            assert record["differing_columns"] == diffs, (side, ordinal)
+            assert record["pair_id"] == pair_id, (side, ordinal)
+        else:
+            assert record["status"] == "PASS"
+            assert record["reason"] is None
+            assert "differing_columns" not in record
+            assert "pair_id" not in record
+
+
+def test_identical_sides_pass_with_plain_records(tmp_path: Path) -> None:
+    import adversarial
+
+    source = tmp_path / "same.parquet"
+    adversarial.write_adversarial(source, "a")
+    for part in ("l", "r", "cmp"):
+        (tmp_path / part).mkdir(parents=True, exist_ok=True)
+    left = stage(source, "python", tmp_path / "l")
+    right = stage(source, "python", tmp_path / "r")
+    result = compare(left, right, tmp_path / "cmp", "1GB", "10GB", "refident")
+    assert result["status"] == "PASS"
+    assert result["matched"] == adversarial.ROW_COUNT
+    records = [json.loads(line) for line in Path(result["details_path"]).read_text().splitlines()]
+    assert len(records) == 2 * adversarial.ROW_COUNT
+    assert all(record["status"] == "PASS" for record in records)
+    assert all("differing_columns" not in record for record in records)
+    assert all("pair_id" not in record for record in records)
+
+
+def test_staging_is_batch_size_independent(tmp_path: Path) -> None:
+    import adversarial
+    import pyarrow.parquet as pq
+
+    source = tmp_path / "a.parquet"
+    adversarial.write_adversarial(source, "a")
+    whole = adversarial.stage_grid(source, tmp_path / "whole")
+    sliced = adversarial.stage_grid(source, tmp_path / "sliced", batch_size=7)
+    assert sliced == whole
+    observed = tmp_path / "observed"
+    observed.mkdir()
+    info = stage(source, "python", observed, batch_size=7)
+    assert info["observed_max_batch_size"] == 7
+    ordinals = pq.read_table(info["path"], columns=["ordinal"]).column("ordinal").to_pylist()
+    assert ordinals == list(range(adversarial.ROW_COUNT))
 
 
 def test_summary_detail_reconciliation(tmp_path: Path) -> None:
@@ -1139,6 +1533,9 @@ def test_exit_code_precedence(tmp_path: Path, capsys: pytest.CaptureFixture[str]
     output = captured.out + captured.err + cli_result.stdout + cli_result.stderr
     assert "secret" not in output
     assert "sensitive-cell-sentinel" not in output
+    run_log_text = (tmp_path / "out" / "run.jsonl").read_text(encoding="utf-8")
+    assert '"dataset_error"' in run_log_text
+    assert "sensitive-cell-sentinel" not in run_log_text
     summary = json.loads((tmp_path / "out" / "summary.json").read_text())
     sentinel_dataset = next(
         dataset
@@ -1202,14 +1599,14 @@ def test_corrupt_dataset_continues(tmp_path: Path) -> None:
     assert {dataset["status"] for dataset in summary["datasets"]} == {"ERROR", "PASS"}
 
 
-def test_corrupt_one_sided_dataset_is_reported_and_continues(tmp_path: Path) -> None:
+def test_corrupt_one_sided_dataset_is_flagged_and_run_continues(tmp_path: Path) -> None:
     sas, python = _roots(tmp_path)
     (sas / "dplocal" / "bad.sas7bdat").write_bytes(b"not a SAS file")
     fixture = Path(__file__).resolve().parents[1] / ".parity-fixtures" / "productsales.sas7bdat"
     shutil.copyfile(fixture, sas / "msoc" / "healthy.sas7bdat")
     _write_parquet(python / "msoc" / "healthy.parquet", {"different": [1]})
     code = run(RunConfig(sas, python, tmp_path / "out"))
-    assert code == 2
+    assert code == 1
     summary = json.loads((tmp_path / "out" / "summary.json").read_text())
     bad = next(
         dataset for dataset in summary["datasets"] if dataset["name"] == "dplocal/bad.sas7bdat"
@@ -1217,16 +1614,15 @@ def test_corrupt_one_sided_dataset_is_reported_and_continues(tmp_path: Path) -> 
     healthy = next(
         dataset for dataset in summary["datasets"] if dataset["name"] == "msoc/healthy.sas7bdat"
     )
-    assert bad["status"] == "ERROR" and bad["detail_complete"] is False
-    assert bad["error_message"]
-    healthy = next(
-        dataset for dataset in summary["datasets"] if dataset["name"] == "msoc/healthy.sas7bdat"
-    )
+    # The unmatched file is never opened, so its corrupt bytes go unnoticed:
+    # it is flagged as missing a counterpart while the healthy pair compares.
+    assert bad["status"] == "FAIL" and bad["reason"] == "missing_counterpart"
+    assert bad["sas_rows"] is None and bad["detail_complete"] is False
     assert healthy["status"] == "FAIL" and healthy["reason"] == "sas_only_columns"
     assert healthy["id"] in summary["detail_links"]
     html = (tmp_path / "out" / "index.html").read_text()
-    assert "The comparison did not run" in html
-    assert bad["error_message"] in html
+    assert "Files without an equivalent" in html
+    assert "dplocal/bad.sas7bdat" in html
 
 
 def test_report_write_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1360,7 +1756,7 @@ def test_disk_backed_comparison_smoke(tmp_path: Path) -> None:
     assert sum(path.stat().st_size for path in work.rglob("*") if path.is_file()) > 0
 
 
-def test_except_all_disagreement_is_dataset_error(
+def test_row_conservation_invariant_is_enforced(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import sentinel_parity.io.duckdb_comparison as comparison
@@ -1371,23 +1767,78 @@ def test_except_all_disagreement_is_dataset_error(
     polars_readstat.ScanReadstat(
         str(sas / "dplocal" / "sample.sas7bdat")
     ).df.collect().write_parquet(python / "dplocal" / "sample.parquet")
-    original_count = comparison._except_count
+    original_stats = comparison._join_stats
     calls = 0
 
-    def disagree(connection: object, left: str, right: str, keycols: list[str]) -> int:
+    def undercount(connection: object, equality: str) -> tuple[int, int, int]:
         nonlocal calls
         calls += 1
-        actual = original_count(connection, left, right, keycols)  # type: ignore[arg-type]
-        return actual + (1 if calls == 1 else 0)
+        matched, sas_only, python_only = original_stats(connection, equality)  # type: ignore[arg-type]
+        return (
+            (matched - 1, sas_only, python_only) if calls == 1 else (matched, sas_only, python_only)
+        )
 
-    monkeypatch.setattr(comparison, "_except_count", disagree)
+    monkeypatch.setattr(comparison, "_join_stats", undercount)
     assert run(RunConfig(sas, python, tmp_path / "out")) == 2
     summary = json.loads((tmp_path / "out" / "summary.json").read_text())
     dataset = summary["datasets"][0]
     assert dataset["status"] == "ERROR"
     assert dataset["reason"] == "RuntimeError"
+    assert "conservation" in dataset["error_message"]
     assert dataset["detail_complete"] is False
     assert dataset["id"] not in summary["detail_links"]
+
+
+def test_is_tmpfs_picks_deepest_mount() -> None:
+    from sentinel_parity.runner import _is_tmpfs
+
+    entries = [("/", "ext4"), ("/tmp", "tmpfs"), ("/tmp/scratch", "ext4")]
+    assert _is_tmpfs(Path("/tmp/run"), entries)
+    assert not _is_tmpfs(Path("/tmp/scratch/run"), entries)
+    assert not _is_tmpfs(Path("/home/run"), entries)
+    assert not _is_tmpfs(Path("/home/run"), [])
+
+
+def test_tmpfs_temp_warning(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import sentinel_parity.runner as runner_module
+
+    sas, python = _roots(tmp_path)
+    fixture = Path(__file__).resolve().parents[1] / ".parity-fixtures" / "productsales.sas7bdat"
+    shutil.copyfile(fixture, sas / "dplocal" / "matched.sas7bdat")
+    polars_readstat.ScanReadstat(
+        str(sas / "dplocal" / "matched.sas7bdat")
+    ).df.collect().write_parquet(python / "dplocal" / "matched.parquet")
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    args = [
+        "run",
+        "-s",
+        str(sas),
+        "-p",
+        str(python),
+        "--temp-dir",
+        str(temp),
+    ]
+    monkeypatch.setattr(
+        runner_module,
+        "_mount_entries",
+        lambda: [(str(tmp_path.parent), "ext4"), (str(tmp_path), "tmpfs")],
+    )
+    result = runner.invoke(app, args + ["-o", str(tmp_path / "out")])
+    assert result.exit_code == 0
+    assert "--temp-dir" in result.stderr
+    events = [
+        json.loads(line) for line in (tmp_path / "out" / "run.jsonl").read_text().splitlines()
+    ]
+    event = next(record for record in events if record["event"] == "temp_on_tmpfs")
+    assert set(event) == {"ts", "elapsed_s", "event", "temp_dir", "filesystem"}
+    assert event["filesystem"] == "tmpfs"
+    monkeypatch.setattr(runner_module, "_mount_entries", lambda: [(str(tmp_path.parent), "ext4")])
+    real = tmp_path / "real"
+    result = runner.invoke(app, args + ["-o", str(real)])
+    assert result.exit_code == 0
+    assert "--temp-dir" not in result.stderr
+    assert "temp_on_tmpfs" not in (real / "run.jsonl").read_text(encoding="utf-8")
 
 
 def test_resource_exhaustion_is_error(tmp_path: Path) -> None:

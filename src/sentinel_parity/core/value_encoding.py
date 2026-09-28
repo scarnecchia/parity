@@ -65,7 +65,11 @@ def rounded_display(
         return value
     normalized = round_to_decimal_places(decimal_value, round_digits).normalize()
     if normalized == normalized.to_integral_value():
-        return normalized.quantize(Decimal(1))
+        # Integer display without an exponent: int() is exact for integral
+        # decimals and avoids the 28-digit context limit quantize would hit
+        # for huge integrals (1e308 with round digits). A negative zero
+        # stays itself instead of collapsing to plain zero.
+        return Decimal(int(normalized)) if normalized else normalized
     return normalized
 
 

@@ -32,3 +32,7 @@ max_temp_size = "10GB"
 # Optional nonnegative integer: mismatch rows shown per side per dataset in HTML.
 # Default: 100. Set to 0 to omit preview rows; complete JSONL details are unaffected.
 preview_rows = 100
+
+# Optional positive integer: DuckDB worker threads for comparison.
+# Default: 4.
+threads = 4

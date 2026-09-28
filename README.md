@@ -21,10 +21,10 @@ The distribution is named `sentinel-parity`; the console command is `parity`.
 Provide both input roots directly:
 
 ```sh
-parity run --sas_root /data/sas --python_root /data/parquet
+parity run --sas-root /data/sas --python-root /data/parquet
 ```
 
-`--sas-root` and `--python-root` are equivalent hyphenated aliases. Each root must contain `dplocal/` and `msoc/` directories.
+`-s` and `-p` are short forms of `--sas-root` and `--python-root`; `-o` shortens `--output-dir`. Each root must contain `dplocal/` and `msoc/` directories.
 
 Or copy [config.toml.example](config.toml.example) to `config.toml`, edit its paths, and run:
 
@@ -45,15 +45,17 @@ Open `parity-report/index.html` directly in a browser. The HTML report has no ne
 | CLI option | TOML key | Type and meaning | Default |
 | --- | --- | --- | --- |
 | `--config` | None | Path to an explicit TOML configuration file | Unset; no config file loaded |
-| `--sas-root`, `--sas_root` | `sas_root` | String path to the SAS output root | Required; no default |
-| `--python-root`, `--python_root` | `python_root` | String path to the Parquet output root | Required; no default |
-| `--output-dir` | `output_dir` | String path to the report directory | `./parity-report` |
+| `--sas-root`, `-s` | `sas_root` | String path to the SAS output root | Required; no default |
+| `--python-root`, `-p` | `python_root` | String path to the Parquet output root | Required; no default |
+| `--output-dir`, `-o` | `output_dir` | String path to the report directory | `./parity-report` |
 | `--id` | `id` | Nonempty string of letters, numbers, and underscores, at most 64 characters; the reserved report name `details` is rejected; writes the report into an `<id>` subfolder of the report directory | Unset; report goes directly to the report directory |
 | `--memory-limit` | `memory_limit` | Nonempty DuckDB memory-limit string, such as `"1GB"` or `"512MB"` | `"1GB"` |
 | `--temp-dir` | `temp_dir` | String path to an existing base directory for the run's private temporary directory | Unset; Python's system temporary-directory selection, including `TMPDIR` |
 | `--max-temp-size` | `max_temp_size` | Nonempty DuckDB maximum temporary-directory-size string, such as `"10GB"` | `"10GB"` |
 | `--preview-rows` | `preview_rows` | Nonnegative integer: maximum mismatch preview rows per side per dataset in HTML; `0` hides preview rows | `100` |
 | `--round` | `round_digits` | Nonnegative integer: round all numeric values — including coerced numeric text — to N digits after the decimal point (nearest, ties away from zero) before comparison | Omitted; raw values compare |
+| `--threads` | `threads` | Positive integer: DuckDB worker threads for comparison | `4` |
+| `--verbose` | None | Flag: echo structured run-log events to stderr as they happen | Not set |
 | `--help` | None | Flag: show help and exit (`parity --help` or `parity run --help`) | Not set |
 
 CLI values override TOML values **per key**. Required roots may come from either source. TOML keys are top-level; unknown keys are rejected.
@@ -61,6 +63,12 @@ CLI values override TOML values **per key**. Required roots may come from either
 Relative paths explicitly set in TOML resolve from the config file's directory. Relative CLI paths, including `--config`, resolve from the current working directory. If `output_dir` is omitted everywhere, its default resolves from the working directory, even when a config file is supplied. `~` expands in paths; environment variables are not interpolated. There is no implicit config discovery.
 
 DuckDB validates the resource-limit strings. These settings limit DuckDB execution, not total process memory or all temporary disk use: Polars, Arrow, Python, and the OS use additional resources. The private run directory is cleaned up when the run finishes or unwinds after an error or handled interruption.
+
+## Large runs
+
+- Place the run temp on real disk: `--temp-dir /path/on/disk`. If the run temp resolves onto a `tmpfs` mount (RAM-backed, common for `/tmp`), the run logs a `temp_on_tmpfs` event and prints a warning, because DuckDB spill files then consume RAM instead of disk. The run continues either way.
+- Size `memory_limit` to roughly 50–60% of machine RAM for large datasets (for example `"32GB"` on a 62 GB host); comparison joins spill to the temp directory beyond that. Raise `--max-temp-size` so the spill has room.
+- `--threads` scales DuckDB comparison work; 4 is a conservative default, and 8–16 helps on many-core hosts with the memory to match.
 
 ## Dataset discovery and pairing
 
@@ -91,24 +99,28 @@ A completed comparison reports `WARN` instead of `FAIL` when every unmatched occ
 parity-report/
   index.html
   summary.json
+  run.jsonl
   details/
     <id>.jsonl
 ```
 
 With `id` set, these files are written into `parity-report/<id>/` so one report directory can hold several runs side by side.
 
-`index.html` contains dataset summaries and a **mismatch-only, bounded preview**, with links to the complete JSONL details. The preview limit applies separately to each side of each dataset; truncation counts show how much was omitted. Passing rows are in JSONL, not the mismatch preview.
+`run.jsonl` is the structured run log: one JSON object per event with counts, durations, paths, and per-phase comparison timings; failures record the exception class and, for `OSError`, the errno and strerror. It never contains cell values, preview rows, or raw exception text. `--verbose` echoes the same lines to stderr as they happen, and a run that fails before the report directory exists drains its buffered events to stderr. A failed run deliberately keeps `run.jsonl`, so the report directory is then not empty: rerunning into it requires deleting the directory — including the log — by hand. The tool never removes the log; it is the forensic record of the failure.
 
-`summary.json` includes the schema version, overall status, the request id as `request_id` (`null` when `id` is unset), package versions, execution limits, dataset entries, preview truncation counts, and `detail_links` mapping dataset IDs to relative JSONL paths. Dataset entries include names, status, reason, `conditions`, row counts, `matched_pairs`, `sas_only`, `python_only`, `row_order_mismatches`, and `detail_complete`. `row_order_mismatches` counts matched rows whose file positions differ — the comparison is order-independent, so reordered files still pass, and `index.html` flags this at the top of the dataset section. Available metadata includes reader schemas and metadata, original filenames, and original/normalized describe output for successfully compared pairs. Fields and metadata available for one-sided or error entries differ from successful pairs.
+`index.html` flags files without an equivalent at the top, then contains dataset summaries and a **mismatch-only, bounded preview**, with links to the complete JSONL details. The preview limit applies separately to each side of each dataset; truncation counts show how much was omitted. Passing rows are in JSONL, not the mismatch preview.
+
+`summary.json` includes the schema version, overall status, the request id as `request_id` (`null` when `id` is unset), package versions, execution limits, dataset entries, preview truncation counts, and `detail_links` mapping dataset IDs to relative JSONL paths. Dataset entries include names, status, reason, `conditions`, row counts, `matched_pairs`, `sas_only`, `python_only`, `row_order_mismatches`, and `detail_complete`. `row_order_mismatches` counts matched rows whose file positions differ — the comparison is order-independent, so reordered files still pass, and `index.html` flags this at the top of the dataset section. Available metadata includes reader schemas and metadata, original filenames, and original/normalized describe output for successfully compared pairs. One-sided entries never open their file, so the existing side's row counts are `null` and they carry no detail link, preview, or reader metadata; error entries differ from successful pairs.
 
 `matched_pairs` counts equal occurrence pairs, not individual detail lines. Each matched pair contributes two `PASS` lines, one per side. `sas_only` and `python_only` count unmatched occurrences. For a completed comparison, each side's row count equals `matched_pairs` plus its unmatched count.
 
-`missing_counterpart` marks every readable row as `FAIL` without attempting occurrence matching: the dataset exists on only one side.
+`missing_counterpart` marks a file with no equivalent on the other side. The file is never opened — no row counts, reader metadata, or JSONL details — and `index.html` lists it under **Files without an equivalent** at the top of the report.
 
-A successfully compared dataset carries `conditions`: every problem found, not just the first. Comparison always runs on the columns both sides share, so a schema delta never stops the row checks.
+A compared dataset carries `conditions`: every problem found, not just the first. Comparison always runs on the columns both sides share, so a schema delta never stops the row checks; a one-sided entry carries exactly one condition, `missing_counterpart`.
 
 | Condition | Severity | Meaning |
 | --- | --- | --- |
+| `missing_counterpart` | FAIL | The file has no equivalent on the other side; the file is never read. |
 | `sas_only_columns` | FAIL | Parquet lacks columns present in SAS, so no row can fully match. |
 | `python_only_columns` | WARN | Parquet has extra columns SAS lacks; their values are not compared. |
 | `value_mismatch` | FAIL | Unmatched rows differ in shared columns beyond character-vs-numeric coercion. |

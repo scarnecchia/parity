@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 import signal
 from pathlib import Path  # noqa: TC003 - Typer evaluates option annotations at runtime.
 from typing import Annotated
@@ -30,9 +31,9 @@ def run_command(
     config: Annotated[
         Path | None, typer.Option("--config", help="TOML configuration file.")
     ] = None,
-    sas_root: Annotated[Path | None, typer.Option("--sas-root", "--sas_root")] = None,
-    python_root: Annotated[Path | None, typer.Option("--python-root", "--python_root")] = None,
-    output_dir: Annotated[Path | None, typer.Option("--output-dir")] = None,
+    sas_root: Annotated[Path | None, typer.Option("--sas-root", "-s")] = None,
+    python_root: Annotated[Path | None, typer.Option("--python-root", "-p")] = None,
+    output_dir: Annotated[Path | None, typer.Option("--output-dir", "-o")] = None,
     request_id: Annotated[
         str | None,
         typer.Option(
@@ -47,6 +48,14 @@ def run_command(
     temp_dir: Annotated[Path | None, typer.Option("--temp-dir")] = None,
     max_temp_size: Annotated[str | None, typer.Option("--max-temp-size")] = None,
     preview_rows: Annotated[int | None, typer.Option("--preview-rows")] = None,
+    threads: Annotated[
+        int | None,
+        typer.Option("--threads", help="DuckDB worker threads for comparison. Default: 4."),
+    ] = None,
+    verbose: Annotated[
+        bool,
+        typer.Option("--verbose", help="Echo structured run-log events to stderr as they happen."),
+    ] = False,
     round: Annotated[
         int | None,
         typer.Option(
@@ -70,16 +79,25 @@ def run_command(
                 "max_temp_size": max_temp_size,
                 "preview_rows": preview_rows,
                 "round_digits": round,
+                "threads": threads,
             },
         )
-        raise typer.Exit(run(config_value))
+        raise typer.Exit(run(config_value, verbose=verbose))
     except ValueError as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(2) from exc
     except KeyboardInterrupt as exc:
         typer.echo("error: interrupted", err=True)
         raise typer.Exit(2) from exc
-    except (OSError, TypeError) as exc:
+    except OSError as exc:
+        detail = ""
+        if exc.errno is not None:
+            detail = f": [errno {exc.errno}] {exc.strerror or os.strerror(exc.errno)}"
+        elif exc.strerror:
+            detail = f": {exc.strerror}"
+        typer.echo(f"error: operation failed ({type(exc).__name__}{detail})", err=True)
+        raise typer.Exit(2) from exc
+    except TypeError as exc:
         typer.echo(f"error: operation failed ({type(exc).__name__})", err=True)
         raise typer.Exit(2) from exc
 
