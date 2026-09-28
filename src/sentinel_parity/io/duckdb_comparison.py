@@ -380,13 +380,18 @@ def _compare_shared(
             "SELECT count(*) FROM pair_differences WHERE kind='paired_mismatch'",
         )
         all_crossed = _all_pair_differences_crossed(connection, crossed)
+        # Without a keyed rebuild the export is exactly this pairing.
+        export_all_crossed = all_crossed
     if keys_order != auto_order:
         for table in ("pair_cells", "pair_differences", "sas_pair", "python_pair"):
             connection.execute(f"DROP TABLE {table}")
         build_difference_tables(keys_order)
-        # Public diagnostic counts must describe the exported pairs, which the
-        # keyed ordering may realign; the private classification counts above
-        # stay on the automatic pass so severity never moves.
+        # Public differing_column_counts must describe the exported pairs,
+        # which the keyed ordering may realign; the private classification
+        # counts above stay on the automatic pass so severity never moves.
+        # differing_pair_count needs no recompute: every rank-aligned pair
+        # differs on shared columns, so it is min(sas_only, python_only)
+        # under any ordering.
         counts = _difference_counts(connection)
         if sas_only or python_only:
             export_all_crossed = _all_pair_differences_crossed(connection, crossed)

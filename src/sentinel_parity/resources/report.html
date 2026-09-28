@@ -307,7 +307,7 @@ footer .build { font: var(--text-xs)/1.6 var(--mono); color: var(--ink-faint); o
 {% for entry in summary.datasets %}{% set _ = dataset_names.update({entry.id: entry.name}) %}{% endfor %}
 <header class="masthead">
   <h1>Sentinel parity report</h1>
-  {% if summary.excel %}<p class="run-meta">Excel workbook: {{ summary.excel.status }}{% if summary.excel.path %} · <a href="{{ summary.excel.path }}">download differences.xlsx</a>{% elif summary.excel.reasons %} — omitted because {% for reason in summary.excel.reasons %}{{ workbook_reason_text(reason) }}{% if not loop.last %}, and {% endif %}{% endfor %}.{% endif %}</p>{% endif %}
+  {% if summary.excel %}<p class="run-meta">Excel workbook: {{ summary.excel.status }}{% if summary.excel.path %} · <a href="{{ summary.excel.path }}">download differences.xlsx</a>{% elif summary.excel.reasons %} — because {% for reason in summary.excel.reasons %}{{ workbook_reason_text(reason) }}{% if not loop.last %}, and {% endif %}{% endfor %}.{% endif %}</p>{% endif %}
   <div class="masthead-row">
     <span class="pill {{ summary.status }}">{{ summary.status }}</span>
     {% set statuses = summary.datasets|map(attribute='status')|list %}

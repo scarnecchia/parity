@@ -119,7 +119,7 @@ The default harness measures 10,000-row and 50,000-row pairs. The opt-in experim
 | `--preview-max-bytes` | `preview_max_bytes` | Positive integer: rendered preview-row bytes per dataset | `1048576` (1 MiB) |
 | `--preview-total-max-bytes` | `preview_total_max_bytes` | Positive integer: rendered preview-row bytes per run | `10485760` (10 MiB) |
 | `--preview-cell-chars` | `preview_cell_chars` | Positive integer: preview characters per cell | `512` |
-| `--pair-keys` / `--no-pair-keys` | `pair_keys` | `--pair-keys`: comma-separated shared column names that order the diagnostic excess-row pairing first; remaining shared columns only break ties. `--no-pair-keys` ignores the TOML value for this run. Never changes pass/fail | Unset; excess rows pair by ascending value order across all shared columns |
+| `--pair-keys` / `--no-pair-keys` | `pair_keys` | `--pair-keys`: comma-separated shared column names that order the diagnostic excess-row pairing first; remaining shared columns only break ties; an empty value falls back to TOML. `--no-pair-keys` overrides both the TOML value and `--pair-keys` for this run. Never changes pass/fail | Unset; excess rows pair by ascending value order across all shared columns |
 | `--excel` / `--no-excel` | `excel` | Boolean: enable automatic workbook export | `true` |
 | `--excel-max-sheets` | `excel_max_sheets` | Positive integer: workbook sheets, including Index | `100` |
 | `--excel-max-rows` | `excel_max_rows` | Positive integer: flat difference rows per workbook | `100000` |
@@ -232,7 +232,7 @@ A compared dataset carries `conditions`: every problem found, not just the first
 | `sas_only_columns` | FAIL | Parquet lacks columns present in SAS. Shared-column values can still match. |
 | `python_only_columns` | WARN | Parquet has extra columns SAS lacks; their values are not compared. |
 | `value_mismatch` | FAIL | Unmatched counts differ, or paired rows differ outside character-vs-numeric columns. |
-| `type_mismatch` | WARN | Unmatched counts are equal, and every shared-value difference is inside character-vs-numeric columns. Other conditions can still make the dataset fail. |
+| `type_mismatch` | WARN | Unmatched counts are equal, and every shared-value difference is inside character-vs-numeric columns. Other conditions can still make the dataset fail. When declared `pair_keys` are set and their pairing also pairs rows differing outside those columns, the condition carries `pairing_note` restating that the pass verdict comes from the automatic pairing. |
 
 A dataset FAILs when any condition fails, WARNs when only warnings remain (which does not fail the run), and PASSes with none. `reason` repeats the most severe condition's code (`null` when clean).
 

@@ -371,6 +371,13 @@ def test_type_only_crossed_differences_warn(tmp_path: Path) -> None:
     result = _compare(tmp_path, {"number": [1]}, {"number": ["2"]})
     assert result["status"] == "WARN"
     assert result["reason"] == "type_mismatch"
+    assert all("pairing_note" not in item for item in result["conditions"])
+    keyed = _compare(
+        tmp_path / "keyed", {"number": [1]}, {"number": ["2"]}, pair_keys=("number",)
+    )
+    assert keyed["status"] == "WARN"
+    assert keyed["reason"] == "type_mismatch"
+    assert all("pairing_note" not in item for item in keyed["conditions"])
 
 
 def test_workbook_policy() -> None:
