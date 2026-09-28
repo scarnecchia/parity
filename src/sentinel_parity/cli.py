@@ -48,6 +48,18 @@ def run_command(
     temp_dir: Annotated[Path | None, typer.Option("--temp-dir")] = None,
     max_temp_size: Annotated[str | None, typer.Option("--max-temp-size")] = None,
     preview_rows: Annotated[int | None, typer.Option("--preview-rows")] = None,
+    preview_max_bytes: Annotated[int | None, typer.Option("--preview-max-bytes")] = None,
+    preview_total_max_bytes: Annotated[
+        int | None, typer.Option("--preview-total-max-bytes")
+    ] = None,
+    preview_cell_chars: Annotated[int | None, typer.Option("--preview-cell-chars")] = None,
+    excel: Annotated[bool | None, typer.Option("--excel/--no-excel")] = None,
+    excel_max_sheets: Annotated[int | None, typer.Option("--excel-max-sheets")] = None,
+    excel_max_rows: Annotated[int | None, typer.Option("--excel-max-rows")] = None,
+    excel_max_rows_per_sheet: Annotated[
+        int | None, typer.Option("--excel-max-rows-per-sheet")
+    ] = None,
+    excel_max_bytes: Annotated[int | None, typer.Option("--excel-max-bytes")] = None,
     threads: Annotated[
         int | None,
         typer.Option("--threads", help="DuckDB worker threads for comparison. Default: 4."),
@@ -78,6 +90,14 @@ def run_command(
                 "temp_dir": temp_dir,
                 "max_temp_size": max_temp_size,
                 "preview_rows": preview_rows,
+                "preview_max_bytes": preview_max_bytes,
+                "preview_total_max_bytes": preview_total_max_bytes,
+                "preview_cell_chars": preview_cell_chars,
+                "excel": excel,
+                "excel_max_sheets": excel_max_sheets,
+                "excel_max_rows": excel_max_rows,
+                "excel_max_rows_per_sheet": excel_max_rows_per_sheet,
+                "excel_max_bytes": excel_max_bytes,
                 "round_digits": round,
                 "threads": threads,
             },

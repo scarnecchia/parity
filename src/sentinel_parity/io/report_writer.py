@@ -22,14 +22,20 @@ def publish(
     summary: dict[str, Any],
     details: dict[str, Path],
     previews: dict[str, list[dict[str, Any]]],
-    preview_truncation: dict[str, dict[str, int]],
+    preview_truncation: dict[str, dict[str, Any]],
+    workbook_source: Path | None = None,
 ) -> None:
     output.mkdir(parents=True, exist_ok=True)
     detail_dir = output / DETAIL_DIR_NAME
     summary_path = output / "summary.json"
     index_path = output / "index.html"
+    workbook_path = output / "differences.xlsx"
     try:
         detail_dir.mkdir(exist_ok=True)
+        if workbook_source is not None:
+            _atomic_copy(workbook_source, workbook_path)
+        else:
+            workbook_path.unlink(missing_ok=True)
         links: dict[str, str] = {}
         for artifact_id, source in details.items():
             target = detail_dir / f"{artifact_id}.jsonl"
@@ -37,6 +43,44 @@ def publish(
             links[artifact_id] = f"{DETAIL_DIR_NAME}/{artifact_id}.jsonl"
         summary["detail_links"] = links
         env = Environment(loader=FileSystemLoader(TEMPLATE), autoescape=select_autoescape(["html"]))
+        row_template = env.get_template("preview_row.html")
+        datasets = summary.get("datasets", [])
+        limits = summary.get("limits", {})
+        remaining_bytes = int(limits.get("preview_total_max_bytes", 10_485_760))
+        dataset_limit = int(limits.get("preview_max_bytes", 1_048_576))
+        row_limit = int(limits.get("preview_rows", 100))
+        for dataset in datasets:
+            dataset_id = dataset["id"]
+            if "difference_row_count" not in dataset:
+                continue
+            rows = previews.get(dataset_id, [])
+            original_count = int(dataset["difference_row_count"])
+            accepted: list[dict[str, Any]] = []
+            rendered_bytes = 0
+            reasons: list[str] = []
+            if original_count > len(rows):
+                reasons.append("row_limit")
+            for row in rows[:row_limit]:
+                fragment = row_template.render(row=row)
+                size = len(fragment.encode("utf-8"))
+                if rendered_bytes + size > dataset_limit or size > remaining_bytes:
+                    reasons.append(
+                        "run_byte_limit" if size > remaining_bytes else "dataset_byte_limit"
+                    )
+                    break
+                accepted.append(row)
+                rendered_bytes += size
+                remaining_bytes -= size
+            previews[dataset_id] = accepted
+            omitted = max(0, original_count - len(accepted))
+            preview_truncation[dataset_id] = {
+                "shown_rows": len(accepted),
+                "omitted_rows": omitted,
+                "rendered_bytes": rendered_bytes,
+                "reasons": list(dict.fromkeys(reasons)),
+            }
+            dataset["preview_truncation"] = preview_truncation[dataset_id]
+        summary["preview_truncation"] = preview_truncation
         html = env.get_template("report.html").render(
             summary=summary,
             previews=previews,
@@ -48,6 +92,7 @@ def publish(
     except BaseException:
         summary_path.unlink(missing_ok=True)
         index_path.unlink(missing_ok=True)
+        workbook_path.unlink(missing_ok=True)
         shutil.rmtree(detail_dir, ignore_errors=True)
         raise
 

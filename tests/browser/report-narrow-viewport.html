@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sentinel parity report fixture</title>
+<style>
+* { box-sizing: border-box; }
+body { margin: 0 auto; max-width: 71rem; padding: 1rem; font: 16px/1.5 system-ui, sans-serif; }
+.table-scroll { max-height: 24rem; overflow: auto; border: 1px solid #777; }
+table { min-width: 56rem; width: 100%; border-collapse: collapse; }
+th, td { padding: .5rem; border-bottom: 1px solid #aaa; text-align: left; }
+</style>
+</head>
+<body>
+<header><h1>Sentinel parity report</h1><p>Excel: omitted · byte_limit</p><a href="details/sample.jsonl">Complete differences (JSONL)</a></header>
+<section><h2>Sample dataset</h2><h3>Difference preview — 1 difference row omitted</h3>
+<div class="table-scroll" role="region" tabindex="0" aria-label="Difference preview table">
+<table><thead><tr><th>Pair</th><th>Column</th><th>SAS value</th><th>Parquet value</th><th>Kind</th><th>SAS row</th><th>Parquet row</th></tr></thead>
+<tbody><tr><td>1</td><td>measurement</td><td>3</td><td>4</td><td>paired_mismatch</td><td>0</td><td>0</td></tr></tbody></table>
+</div><p>Showing 1 of 2 difference rows. 1 omitted by preview limits.</p></section>
+</body>
+</html>

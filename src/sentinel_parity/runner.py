@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import shutil
 import sys
@@ -17,11 +16,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from sentinel_parity.core.discovery import pair_files
+from sentinel_parity.core.export_policy import ExcelLimits, WorkbookMeasurements, excel_omissions
 from sentinel_parity.io import run_log
 from sentinel_parity.io.discovery import discover, validate_roots_and_output
 from sentinel_parity.io.duckdb_comparison import compare
 from sentinel_parity.io.report_writer import publish
 from sentinel_parity.io.staging import stage
+from sentinel_parity.io.workbook_writer import safe_sheet_names, write_workbook
 
 if TYPE_CHECKING:
     from sentinel_parity.config import RunConfig
@@ -79,6 +80,14 @@ def _execute(config: RunConfig) -> int:
     details: dict[str, Path] = {}
     previews: dict[str, list[dict[str, Any]]] = {}
     preview_truncation: dict[str, dict[str, int]] = {}
+    workbook_stage_paths: list[Path] = []
+    workbook_reasons: list[dict[str, str | None]] = []
+    workbook_remaining = {
+        "rows": min(config.excel_max_rows, 1_048_575),
+        "rows_per_dataset": min(config.excel_max_rows_per_sheet, 1_048_575),
+        "bytes": config.excel_max_bytes,
+        "sheets": min(config.excel_max_sheets, 100) - 1,
+    }
     fatal = False
     any_fail = bool(pairing.sas_only or pairing.python_only)
     any_warn = False
@@ -119,7 +128,10 @@ def _execute(config: RunConfig) -> int:
                     reason="missing_counterpart",
                     duration_s=round(time.monotonic() - started, 3),
                 )
-        for sas, python in pairing.matched:
+        matched_pairs = sorted(
+            pairing.matched, key=lambda pair: f"{pair[0].directory}/{pair[0].filename}".casefold()
+        )
+        for sas, python in matched_pairs:
             ident = uuid.uuid4().hex
             dataset_work = run_temp / f"dataset-{ident}"
             dataset_work.mkdir()
@@ -145,8 +157,36 @@ def _execute(config: RunConfig) -> int:
                     config.max_temp_size,
                     ident,
                     threads=config.threads,
+                    preview_rows=config.preview_rows,
+                    preview_cell_chars=config.preview_cell_chars,
+                    workbook_stage_path=(
+                        dataset_work / "workbook.parquet"
+                        if config.excel and not workbook_reasons
+                        else None
+                    ),
+                    workbook_remaining=workbook_remaining,
                 )
                 details[ident] = Path(result["details_path"])
+                stage_reasons = result["workbook_stage_reasons"]
+                if stage_reasons and not workbook_reasons:
+                    workbook_reasons.extend(
+                        {
+                            "code": reason.split(":", 1)[0],
+                            "dataset_id": reason.split(":", 1)[1] if ":" in reason else ident,
+                        }
+                        for reason in stage_reasons
+                    )
+                    for leftover in workbook_stage_paths:
+                        leftover.unlink(missing_ok=True)
+                    workbook_stage_paths.clear()
+                staged_path = result.get("workbook_stage_path")
+                if staged_path is not None and not workbook_reasons:
+                    staged_path = Path(staged_path)
+                    workbook_stage_paths.append(staged_path)
+                    measurements = result["workbook_measurements"]
+                    workbook_remaining["rows"] -= measurements["rows"]
+                    workbook_remaining["bytes"] -= measurements["text_bytes"]
+                    workbook_remaining["sheets"] -= measurements["sheets"] - 1
                 any_fail |= result["status"] == "FAIL"
                 any_warn |= result["status"] == "WARN"
                 metadata = {
@@ -160,9 +200,12 @@ def _execute(config: RunConfig) -> int:
                         "types": python_stage["types"],
                     },
                 }
-                preview_records, truncation, column_counts, pair_count = _preview(
-                    Path(result["details_path"]), config.preview_rows
-                )
+                preview_records = result["preview_rows"]
+                difference_count = result["difference_row_count"]
+                details_bytes = result["details_bytes"]
+                truncation: dict[str, Any] = {}
+                column_counts = result["differing_column_counts"]
+                pair_count = result["differing_pair_count"]
                 datasets.append(
                     {
                         "id": ident,
@@ -189,6 +232,13 @@ def _execute(config: RunConfig) -> int:
                             sorted(column_counts.items(), key=lambda item: (-item[1], item[0]))
                         ),
                         "differing_pair_count": pair_count,
+                        "difference_row_count": difference_count,
+                        "details_bytes": details_bytes,
+                        "preview_truncation": truncation,
+                        "workbook_measurements": result["workbook_measurements"],
+                        "workbook_stage_path": str(staged_path)
+                        if staged_path is not None
+                        else None,
                         "detail_complete": True,
                         "metadata": metadata,
                     }
@@ -229,8 +279,111 @@ def _execute(config: RunConfig) -> int:
                 )
         status = "ERROR" if fatal else ("FAIL" if any_fail else ("WARN" if any_warn else "PASS"))
         datasets.sort(key=lambda item: item["name"].casefold())
+        workbook_rows = sum(
+            int(item.get("workbook_measurements", {}).get("rows", 0)) for item in datasets
+        )
+        workbook_data_bytes = sum(
+            int(item.get("workbook_measurements", {}).get("text_bytes", 0)) for item in datasets
+        )
+        staged_datasets = [item for item in datasets if item.get("workbook_stage_path")]
+        sheet_names = safe_sheet_names([item["name"] for item in staged_datasets])
+        index_rows = [
+            (
+                item["name"],
+                item["status"],
+                ", ".join(
+                    str(condition.get("reason", "")) for condition in item.get("conditions", [])
+                ),
+                sheet_names.get(item["name"], ""),
+            )
+            for item in datasets
+        ]
+        index_bytes = sum(len(value.encode("utf-8")) for row in index_rows for value in row) + sum(
+            len(value.encode("utf-8")) for value in ("Dataset", "Status", "Conditions", "Sheet")
+        )
+        workbook_bytes = workbook_data_bytes + index_bytes
+        index_max_cell = max(
+            (len(value) for row in index_rows for value in row),
+            default=0,
+        )
+        workbook_max_cell = max(
+            index_max_cell,
+            *(
+                int(item.get("workbook_measurements", {}).get("max_cell_chars", 0))
+                for item in datasets
+            ),
+        )
+        workbook_sheets = 1 + len(staged_datasets)
+        workbook_measurements = WorkbookMeasurements(
+            workbook_rows, workbook_bytes, workbook_max_cell, workbook_sheets
+        )
+        excel_limits = ExcelLimits(
+            config.excel,
+            config.excel_max_sheets,
+            config.excel_max_rows,
+            config.excel_max_rows_per_sheet,
+            config.excel_max_bytes,
+        )
+        excel_reasons = [
+            {"code": reason, "dataset_id": None}
+            for reason in excel_omissions(workbook_measurements, excel_limits)
+        ]
+        if len(index_rows) + 1 > 1_048_576 and config.excel:
+            excel_reasons.append({"code": "index_row_limit", "dataset_id": None})
+        if (
+            index_max_cell > 32_767
+            and config.excel
+            and not any(reason["code"] == "cell_limit" for reason in excel_reasons)
+        ):
+            excel_reasons.append({"code": "cell_limit", "dataset_id": None})
+        for item in datasets:
+            if (
+                item.get("workbook_measurements", {}).get("rows", 0)
+                > min(config.excel_max_rows_per_sheet, 1_048_575)
+                and config.excel
+            ):
+                excel_reasons.append({"code": "sheet_row_limit", "dataset_id": item["id"]})
+        has_workbook_differences = workbook_rows > 0 or any(
+            item.get("conditions") for item in datasets if item["status"] != "PASS"
+        )
+        if config.excel:
+            excel_reasons.extend(
+                reason
+                for reason in workbook_reasons
+                if not any(
+                    existing["code"] == reason["code"]
+                    and existing["dataset_id"] == reason["dataset_id"]
+                    for existing in excel_reasons
+                )
+            )
+        workbook_status = (
+            "disabled"
+            if not config.excel
+            else "omitted"
+            if excel_reasons
+            else "generated"
+            if has_workbook_differences
+            else "no_differences"
+        )
         summary = {
-            "schema_version": 2,
+            "schema_version": 3,
+            "details_schema_version": 2,
+            "excel": {
+                "status": workbook_status,
+                "path": None,
+                "reasons": excel_reasons,
+                "limits": {
+                    "max_sheets": config.excel_max_sheets,
+                    "max_rows": config.excel_max_rows,
+                    "max_rows_per_sheet": config.excel_max_rows_per_sheet,
+                    "max_bytes": config.excel_max_bytes,
+                },
+                "measurements": {
+                    "rows": workbook_rows,
+                    "text_bytes": workbook_bytes,
+                    "max_cell_chars": workbook_max_cell,
+                },
+            },
             "status": status,
             "run_at": datetime.now(UTC).isoformat(timespec="seconds"),
             "request_id": config.id,
@@ -244,15 +397,39 @@ def _execute(config: RunConfig) -> int:
                 "max_temp_size": config.max_temp_size,
                 "batch_size": config.batch_size,
                 "preview_rows": config.preview_rows,
+                "preview_max_bytes": config.preview_max_bytes,
+                "preview_total_max_bytes": config.preview_total_max_bytes,
+                "preview_cell_chars": config.preview_cell_chars,
+                "excel": config.excel,
+                "excel_max_sheets": config.excel_max_sheets,
+                "excel_max_rows": config.excel_max_rows,
+                "excel_max_rows_per_sheet": config.excel_max_rows_per_sheet,
+                "excel_max_bytes": config.excel_max_bytes,
                 "round_digits": config.round_digits,
                 "threads": config.threads,
             },
             "datasets": datasets,
+            "difference_row_count": sum(item.get("difference_row_count", 0) for item in datasets),
+            "details_bytes": sum(item.get("details_bytes", 0) for item in datasets),
             "preview_truncation": preview_truncation,
         }
+        workbook_source: Path | None = None
+        if workbook_status == "generated":
+            workbook_source = run_temp / "differences.xlsx"
+            write_workbook(
+                workbook_source,
+                datasets,
+                {
+                    str(item["id"]): Path(item["workbook_stage_path"])
+                    for item in datasets
+                    if item.get("workbook_stage_path")
+                },
+                run_temp,
+            )
+            summary["excel"]["path"] = "differences.xlsx"
         run_log.event("publish_start", datasets=len(datasets), details=len(details))
         try:
-            publish(output, summary, details, previews, preview_truncation)
+            publish(output, summary, details, previews, preview_truncation, workbook_source)
         except BaseException as exc:
             with suppress(Exception):
                 run_log.error("publish_error", exc)
@@ -306,40 +483,4 @@ def _warn_on_tmpfs_temp(config: RunConfig) -> None:
         f"warning: run temp directory {base} is on tmpfs, so DuckDB spill "
         "counts against RAM; pass --temp-dir to place the run temp on real disk",
         file=sys.stderr,
-    )
-
-
-def _preview(
-    path: Path, limit: int
-) -> tuple[list[dict[str, Any]], dict[str, int], dict[str, int], int]:
-    """Collect bounded preview records plus mismatch stats from the full stream.
-
-    The stats scan every detail record so the report story reflects all
-    mismatches, not only the previewed prefix. Paired rows are counted once
-    per pair (on the SAS record) so per-column counts describe row pairs.
-    """
-    result: list[dict[str, Any]] = []
-    shown = {"sas": 0, "python": 0}
-    total = {"sas": 0, "python": 0}
-    column_counts: dict[str, int] = {}
-    pair_count = 0
-    with path.open(encoding="utf-8") as source:
-        for line in source:
-            row = json.loads(line)
-            side = row["side"]
-            if row["status"] == "FAIL" and side in total:
-                total[side] += 1
-                if shown[side] < limit:
-                    result.append(row)
-                    shown[side] += 1
-                pair_id = row.get("pair_id")
-                if pair_id and side == "sas":
-                    pair_count += 1
-                    for name in row.get("differing_columns") or []:
-                        column_counts[name] = column_counts.get(name, 0) + 1
-    return (
-        result,
-        {side: total[side] - shown[side] for side in total},
-        column_counts,
-        pair_count,
     )
