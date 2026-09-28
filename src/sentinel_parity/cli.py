@@ -88,6 +88,10 @@ def run_command(
     ] = None,
 ) -> None:
     """Compare discovered datasets and write a local report."""
+    declared_pair_keys: tuple[str, ...] | None = None
+    if pair_keys and pair_keys.strip():
+        names = tuple(name.strip() for name in pair_keys.split(",") if name.strip())
+        declared_pair_keys = names or None
     try:
         config_value = load_config(
             config,
@@ -103,11 +107,7 @@ def run_command(
                 "preview_max_bytes": preview_max_bytes,
                 "preview_total_max_bytes": preview_total_max_bytes,
                 "preview_cell_chars": preview_cell_chars,
-                "pair_keys": (
-                    tuple(name.strip() for name in pair_keys.split(",") if name.strip())
-                    if pair_keys and pair_keys.strip()
-                    else None
-                ),
+                "pair_keys": declared_pair_keys,
                 "excel": excel,
                 "excel_max_sheets": excel_max_sheets,
                 "excel_max_rows": excel_max_rows,

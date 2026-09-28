@@ -73,16 +73,24 @@ def compare(
         sas_only_columns = [name for name in left_columns if name not in right_names]
         python_only_columns = [name for name in right_columns if name not in left_names]
         shared = [name for name in left_columns if name in right_names]
-        # Only declared keys that both sides share can order the pairing; the
-        # rest are reported so a typo or schema drift is visible.
+        # Staged column names are case-folded, so declared keys normalize the
+        # same way; only keys both sides share can order the pairing, and the
+        # rest are logged so a typo or schema drift is visible.
         shared_names = set(shared)
-        effective_pair_keys = [name for name in pair_keys if name in shared_names]
-        if pair_keys and len(effective_pair_keys) < len(pair_keys):
+        declared_keys = list(dict.fromkeys(str(name).casefold() for name in pair_keys if name))
+        effective_pair_keys = [name for name in declared_keys if name in shared_names]
+        if declared_keys and len(effective_pair_keys) < len(declared_keys):
             run_log.event(
                 "pair_keys_unused",
                 dataset=dataset_id,
-                keys=[name for name in pair_keys if name not in shared_names],
+                keys=[name for name in declared_keys if name not in shared_names],
             )
+        crossed = [
+            name
+            for name in shared
+            if {_dtype_kind(left["types"][name]), _dtype_kind(right["types"][name])}
+            == {"number", "text"}
+        ]
         union = left_columns + [name for name in right_columns if name not in left_names]
         detail_path = work / f"{artifact_id}.jsonl"
         conditions: list[dict[str, Any]] = []
@@ -101,38 +109,26 @@ def compare(
         matched = sas_only = python_only = order_mismatches = 0
         counts: dict[str, int] = {}
         pair_count = 0
-        crossed: list[str] = []
         if shared:
-            matched, sas_only, python_only, order_mismatches = _compare_shared(
-                connection,
-                left,
-                right,
-                shared,
-                union,
-                left_names,
-                right_names,
-                detail_path,
-                dataset_id,
-                preview_rows,
-                preview_cell_chars,
-                pair_keys=effective_pair_keys,
+            matched, sas_only, python_only, order_mismatches, counts, pair_count, all_crossed = (
+                _compare_shared(
+                    connection,
+                    left,
+                    right,
+                    shared,
+                    union,
+                    left_names,
+                    right_names,
+                    detail_path,
+                    dataset_id,
+                    preview_rows,
+                    preview_cell_chars,
+                    pair_keys=effective_pair_keys,
+                    crossed=crossed,
+                )
             )
             if sas_only or python_only:
-                crossed = [
-                    name
-                    for name in shared
-                    if {_dtype_kind(left["types"][name]), _dtype_kind(right["types"][name])}
-                    == {"number", "text"}
-                ]
-                counts = _difference_counts(connection)
-                pair_count = _scalar_count(
-                    connection,
-                    "SELECT count(*) FROM pair_differences WHERE kind='paired_mismatch'",
-                )
-                type_explains = (
-                    sas_only == python_only == pair_count
-                    and _all_pair_differences_crossed(connection, crossed)
-                )
+                type_explains = sas_only == python_only == pair_count and all_crossed
                 if type_explains:
                     conditions.append(
                         {"severity": "WARN", "reason": "type_mismatch", "columns": crossed}
@@ -217,7 +213,8 @@ def _compare_shared(
     preview_rows: int,
     cell_chars: int,
     pair_keys: list[str],
-) -> tuple[int, int, int, int]:
+    crossed: list[str],
+) -> tuple[int, int, int, int, dict[str, int], int, bool]:
     keys = ", ".join(quote_identifier("k_" + name) for name in shared)
     for side in ("sas", "python"):
         ranked_sql = (
@@ -241,29 +238,19 @@ def _compare_shared(
     matched, sas_only, python_only = _join_stats(connection, equality)
     if matched + sas_only != left["rows"] or matched + python_only != right["rows"]:
         raise RuntimeError("row counts violate multiset conservation")
+    keys_order = list(pair_keys) + [name for name in shared if name not in pair_keys]
+    auto_order = list(shared)
+
     for side, other in (("sas", "python"), ("python", "sas")):
         on = " AND ".join(
             f"s.{quote_identifier('k_' + n)}=c.{quote_identifier('k_' + n)}" for n in shared
         )
-        excess_sql = (
+        connection.execute(
             f"CREATE TABLE {side}_excess AS SELECT s.* FROM {side}_ranked s "
             f"LEFT JOIN {other}_counts c ON {on} "
             "WHERE s.occurrence > coalesce(c.n, 0)"
         )
-        pair_sql = (
-            f"CREATE TABLE {side}_pair AS SELECT *, "
-            "row_number() OVER (ORDER BY "
-            # Declared pairing keys order the diagnostic pairing first; the
-            # remaining shared columns and the staging ordinal only break ties.
-            + ", ".join(
-                f"{quote_identifier('k_' + name)} ASC NULLS FIRST"
-                for name in pair_keys + [name for name in shared if name not in pair_keys]
-            )
-            + ", ordinal) pair_rank "
-            + f"FROM {side}_excess"
-        )
-        connection.execute(excess_sql)
-        connection.execute(pair_sql)
+
     pair_match = "l.pair_rank=r.pair_rank"
     tests = " OR ".join(
         f"l.{quote_identifier('k_' + n)} IS DISTINCT FROM r.{quote_identifier('k_' + n)}"
@@ -281,52 +268,84 @@ def _compare_shared(
         + tests
         + ")"
     )
-    connection.execute(pair_query)
-    cells = []
-    for name in union:
-        if name in left_names and name in right_names:
-            cells.append(
-                "SELECT d.s_ordinal,d.p_ordinal,d.pair_rank,d.kind,"
-                f"{_sql_string(name)} AS column_name,"
-                f"l.{quote_identifier('v_' + name)} AS sas,"
-                f"r.{quote_identifier('v_' + name)} AS python "
-                "FROM pair_differences d JOIN sas_pair l ON l.ordinal=d.s_ordinal "
-                "JOIN python_pair r ON r.ordinal=d.p_ordinal "
-                "WHERE d.kind='paired_mismatch' AND "
-                f"l.{quote_identifier('k_' + name)} IS DISTINCT FROM "
-                f"r.{quote_identifier('k_' + name)}"
+
+    def build_difference_tables(ordering: list[str]) -> None:
+        for side in ("sas", "python"):
+            connection.execute(
+                f"CREATE TABLE {side}_pair AS SELECT *, "
+                "row_number() OVER (ORDER BY "
+                # Declared pairing keys order the diagnostic pairing first; the
+                # remaining shared columns and the staging ordinal only break
+                # ties.
+                + ", ".join(f"{quote_identifier('k_' + name)} ASC NULLS FIRST" for name in ordering)
+                + ", ordinal) pair_rank "
+                + f"FROM {side}_excess"
             )
-            cells.append(
-                "SELECT d.s_ordinal,d.p_ordinal,d.pair_rank,d.kind,"
-                f"{_sql_string(name)} AS column_name,"
-                f"l.{quote_identifier('v_' + name)} AS sas,NULL::VARCHAR AS python "
-                "FROM pair_differences d JOIN sas_pair l ON l.ordinal=d.s_ordinal "
-                "WHERE d.kind='only_sas'"
-            )
-            cells.append(
-                "SELECT d.s_ordinal,d.p_ordinal,d.pair_rank,d.kind,"
-                f"{_sql_string(name)} AS column_name,"
-                f"NULL::VARCHAR AS sas,r.{quote_identifier('v_' + name)} AS python "
-                "FROM pair_differences d JOIN python_pair r ON r.ordinal=d.p_ordinal "
-                "WHERE d.kind='only_python'"
-            )
-        elif name in left_names:
-            cells.append(
-                "SELECT d.s_ordinal,d.p_ordinal,d.pair_rank,d.kind,"
-                f"{_sql_string(name)} AS column_name,"
-                f"l.{quote_identifier('v_' + name)} AS sas,NULL::VARCHAR AS python "
-                "FROM pair_differences d JOIN sas_pair l ON l.ordinal=d.s_ordinal "
-                "WHERE d.kind='only_sas'"
-            )
-        else:
-            cells.append(
-                "SELECT d.s_ordinal,d.p_ordinal,d.pair_rank,d.kind,"
-                f"{_sql_string(name)} AS column_name,"
-                f"NULL::VARCHAR AS sas,r.{quote_identifier('v_' + name)} AS python "
-                "FROM pair_differences d JOIN python_pair r ON r.ordinal=d.p_ordinal "
-                "WHERE d.kind='only_python'"
-            )
-    connection.execute("CREATE TABLE pair_cells AS " + " UNION ALL ".join(cells))
+        connection.execute(pair_query)
+        cells = []
+        for name in union:
+            if name in left_names and name in right_names:
+                cells.append(
+                    "SELECT d.s_ordinal,d.p_ordinal,d.pair_rank,d.kind,"
+                    f"{_sql_string(name)} AS column_name,"
+                    f"l.{quote_identifier('v_' + name)} AS sas,"
+                    f"r.{quote_identifier('v_' + name)} AS python "
+                    "FROM pair_differences d JOIN sas_pair l ON l.ordinal=d.s_ordinal "
+                    "JOIN python_pair r ON r.ordinal=d.p_ordinal "
+                    "WHERE d.kind='paired_mismatch' AND "
+                    f"l.{quote_identifier('k_' + name)} IS DISTINCT FROM "
+                    f"r.{quote_identifier('k_' + name)}"
+                )
+                cells.append(
+                    "SELECT d.s_ordinal,d.p_ordinal,d.pair_rank,d.kind,"
+                    f"{_sql_string(name)} AS column_name,"
+                    f"l.{quote_identifier('v_' + name)} AS sas,NULL::VARCHAR AS python "
+                    "FROM pair_differences d JOIN sas_pair l ON l.ordinal=d.s_ordinal "
+                    "WHERE d.kind='only_sas'"
+                )
+                cells.append(
+                    "SELECT d.s_ordinal,d.p_ordinal,d.pair_rank,d.kind,"
+                    f"{_sql_string(name)} AS column_name,"
+                    f"NULL::VARCHAR AS sas,r.{quote_identifier('v_' + name)} AS python "
+                    "FROM pair_differences d JOIN python_pair r ON r.ordinal=d.p_ordinal "
+                    "WHERE d.kind='only_python'"
+                )
+            elif name in left_names:
+                cells.append(
+                    "SELECT d.s_ordinal,d.p_ordinal,d.pair_rank,d.kind,"
+                    f"{_sql_string(name)} AS column_name,"
+                    f"l.{quote_identifier('v_' + name)} AS sas,NULL::VARCHAR AS python "
+                    "FROM pair_differences d JOIN sas_pair l ON l.ordinal=d.s_ordinal "
+                    "WHERE d.kind='only_sas'"
+                )
+            else:
+                cells.append(
+                    "SELECT d.s_ordinal,d.p_ordinal,d.pair_rank,d.kind,"
+                    f"{_sql_string(name)} AS column_name,"
+                    f"NULL::VARCHAR AS sas,r.{quote_identifier('v_' + name)} AS python "
+                    "FROM pair_differences d JOIN python_pair r ON r.ordinal=d.p_ordinal "
+                    "WHERE d.kind='only_python'"
+                )
+        connection.execute("CREATE TABLE pair_cells AS " + " UNION ALL ".join(cells))
+
+    # Severity classification always runs on the automatic all-shared-column
+    # ordering, so declared pairing keys can realign the diagnostic pairing
+    # without ever moving a dataset between FAIL and WARN.
+    build_difference_tables(auto_order)
+    counts: dict[str, int] = {}
+    pair_count = 0
+    all_crossed = False
+    if sas_only or python_only:
+        counts = _difference_counts(connection)
+        pair_count = _scalar_count(
+            connection,
+            "SELECT count(*) FROM pair_differences WHERE kind='paired_mismatch'",
+        )
+        all_crossed = _all_pair_differences_crossed(connection, crossed)
+    if keys_order != auto_order:
+        for table in ("pair_cells", "pair_differences", "sas_pair", "python_pair"):
+            connection.execute(f"DROP TABLE {table}")
+        build_difference_tables(keys_order)
     _export_pair_cells(connection, detail_path, dataset_id)
     connection.execute(
         "CREATE TEMP TABLE preview_source AS SELECT pair_rank AS pair_id,kind,column_name,"
@@ -347,7 +366,15 @@ def _compare_shared(
         + " WHERE l.ordinal != r.ordinal"
     )
     order = connection.execute(order_query).fetchone()
-    return matched, sas_only, python_only, int(order[0] if order else 0)
+    return (
+        matched,
+        sas_only,
+        python_only,
+        int(order[0] if order else 0),
+        counts,
+        pair_count,
+        all_crossed,
+    )
 
 
 def _bounded_preview(

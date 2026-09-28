@@ -206,6 +206,36 @@ def test_pair_keys_dropped_when_missing_from_shared_columns(tmp_path: Path) -> N
     assert result["pair_keys"] == ["g"]
 
 
+def test_pair_keys_casefolded_to_staged_names(tmp_path: Path) -> None:
+    result = _compare(
+        tmp_path,
+        {"Product": ["a", "b"], "region": ["x", "x"]},
+        {"Product": ["c", "d"], "region": ["x", "x"]},
+        pair_keys=("PRODUCT",),
+    )
+    assert result["pair_keys"] == ["product"]
+    records = [
+        json.loads(line)
+        for line in Path(result["details_path"]).read_text().splitlines()
+        if json.loads(line)["kind"] == "paired_mismatch"
+    ]
+    assert len(records) == 2
+
+
+def test_pair_keys_never_change_severity(tmp_path: Path) -> None:
+    # g is text on one side and numeric on the other (crossed); k1 is numeric
+    # on both. Declaring k1 as the pairing key realigns the pairs but must not
+    # move the dataset from FAIL (value_mismatch) to WARN (type_mismatch).
+    left = {"g": ["x", "y"], "k1": [1, 2]}
+    right = {"g": [5, 6], "k1": [2, 1]}
+    automatic = _compare(tmp_path / "auto", left, right)
+    keyed = _compare(tmp_path / "keyed", left, right, pair_keys=("k1",))
+    for result in (automatic, keyed):
+        assert result["status"] == "FAIL"
+        assert result["reason"] == "value_mismatch"
+        assert result["type_mismatched_columns"] == ["g"]
+
+
 def test_report_explains_pairing_basis_flags_key_rows_and_reasons(tmp_path: Path) -> None:
     row = {
         "pair_id": 1,
@@ -234,7 +264,7 @@ def test_report_explains_pairing_basis_flags_key_rows_and_reasons(tmp_path: Path
             ],
             "limits": {
                 "max_sheets": 100,
-                "max_rows": 100000,
+                "max_rows": 2000000,
                 "max_rows_per_sheet": 25000,
                 "max_bytes": 104857600,
             },
@@ -255,12 +285,23 @@ def test_report_explains_pairing_basis_flags_key_rows_and_reasons(tmp_path: Path
     html = (tmp_path / "index.html").read_text()
     assert "declared pairing keys (group), then remaining shared columns" in html
     assert 'class="key-diff"' in html
-    assert "the run exceeds --excel-max-rows (100000 flat difference rows)" in html
+    assert (
+        "the run exceeds --excel-max-rows (Excel's hard limit of 1048575 flat difference rows)"
+        in html
+    )
     assert (
         "a dataset exceeds --excel-max-rows-per-sheet (25000 flat difference rows) — dplocal/people"
         in html
     )
     assert "(dataset-2)" not in html
+
+    output = json.loads((tmp_path / "summary.json").read_text())
+    resource_dir = Path(__file__).parents[1] / "src/sentinel_parity/resources"
+    env = Environment(loader=FileSystemLoader(resource_dir), autoescape=select_autoescape(["html"]))
+    fragment = env.get_template("preview_row.html").render(row=row, pairing_keys=["group"])
+    assert output["preview_truncation"]["dataset-2"]["rendered_bytes"] == len(
+        fragment.encode("utf-8")
+    )
 
     summary["datasets"][0]["pair_keys"] = []
     publish(tmp_path / "auto", summary, {}, {"dataset-2": [row]}, {"dataset-2": {}})

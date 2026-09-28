@@ -41,10 +41,12 @@ preview_cell_chars = 512
 # Optional list of shared column names that order the diagnostic row pairing
 # first, with the remaining shared columns only breaking ties. This changes
 # which excess rows are shown as pairs in the report — never pass/fail.
-# Keys missing from a dataset's shared columns are reported in run.jsonl and
-# dropped. Default: unset; excess rows pair by ascending value order across
-# all shared columns.
-# pair_keys = ["group", "person_id"]
+# Column names are case-folded to match staged columns; keys missing from a
+# dataset's shared columns are reported in run.jsonl and dropped. Declare the
+# stable identity column, not a column whose values may be corrupted.
+# Default: unset; excess rows pair by ascending value order across all
+# shared columns.
+pair_keys = ["group", "person_id"]
 
 # Optional automatic Excel workbook. A limit breach omits the complete workbook.
 # Defaults: enabled, 100 sheets, 100000 difference rows total, 25000 per dataset, 100 MiB projected uncompressed cell text.

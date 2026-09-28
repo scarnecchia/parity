@@ -293,11 +293,11 @@ footer .build { font: var(--text-xs)/1.6 var(--mono); color: var(--ink-faint); o
 </head>
 <body>
 {% macro workbook_reason_text(reason) -%}
-{%- set limits = summary.excel.limits -%}
-{%- if reason.code == "row_limit" %}the run exceeds --excel-max-rows ({{ limits["max_rows"] }} flat difference rows)
-{%- elif reason.code == "sheet_row_limit" %}a dataset exceeds --excel-max-rows-per-sheet ({{ limits["max_rows_per_sheet"] }} flat difference rows){% if reason.dataset_id %} — {{ dataset_names.get(reason.dataset_id, reason.dataset_id) }}{% endif %}
-{%- elif reason.code == "byte_limit" %}the run exceeds --excel-max-bytes ({{ limits["max_bytes"] }} bytes of cell text)
-{%- elif reason.code == "sheet_limit" %}more dataset sheets than --excel-max-sheets allows ({{ limits["max_sheets"] }})
+{%- set limits = summary.excel.limits | default({}) -%}
+{%- if reason.code == "row_limit" %}{% set cap = [limits.get("max_rows", 1048575), 1048575] | min %}the run exceeds --excel-max-rows ({% if limits.get("max_rows", 0) > 1048575 %}Excel's hard limit of {{ cap }}{% else %}{{ cap }}{% endif %} flat difference rows)
+{%- elif reason.code == "sheet_row_limit" %}{% set cap = [limits.get("max_rows_per_sheet", 1048575), 1048575] | min %}a dataset exceeds --excel-max-rows-per-sheet ({{ cap }} flat difference rows){% if reason.dataset_id %} — {{ dataset_names.get(reason.dataset_id, reason.dataset_id) }}{% endif %}
+{%- elif reason.code == "byte_limit" %}the run exceeds --excel-max-bytes ({{ limits.get("max_bytes", "?") }} bytes of cell text)
+{%- elif reason.code == "sheet_limit" %}{% set cap = [limits.get("max_sheets", 100), 100] | min %}more dataset sheets than --excel-max-sheets allows ({{ cap }} sheets including the Index sheet{% if limits.get("max_sheets", 0) > 100 %}, Excel's hard limit{% endif %})
 {%- elif reason.code == "cell_limit" %}a value exceeds Excel's 32,767-character cell limit
 {%- elif reason.code == "index_row_limit" %}too many datasets for the workbook Index sheet
 {%- else %}{{ reason.code }}{% if reason.dataset_id %} ({{ dataset_names.get(reason.dataset_id, reason.dataset_id) }}){% endif %}

@@ -33,6 +33,7 @@ def test_documented_config_loads(tmp_path: Path) -> None:
     assert config.preview_max_bytes == 1_048_576
     assert config.preview_total_max_bytes == 10_485_760
     assert config.preview_cell_chars == 512
+    assert config.pair_keys == ("group", "person_id")
     assert config.excel_max_sheets == 100
     assert config.excel_max_rows == 100_000
     assert config.excel_max_rows_per_sheet == 25_000
@@ -114,3 +115,17 @@ def test_pair_keys_loader_rejects_non_string_or_empty_entries(
 def test_run_config_rejects_duplicate_pair_keys() -> None:
     with pytest.raises(ValueError):
         RunConfig(Path("sas"), Path("python"), pair_keys=("group", "group"))
+    with pytest.raises(ValueError):
+        RunConfig(Path("sas"), Path("python"), pair_keys=("Group", "group"))
+
+
+def test_pair_keys_empty_cli_override_keeps_toml(tmp_path: Path) -> None:
+    config_path = tmp_path / "run.toml"
+    config_path.write_text(
+        'sas_root="sas"\npython_root="python"\npair_keys=["Group"]\n',
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path, {"pair_keys": None})
+
+    assert config.pair_keys == ("Group",)

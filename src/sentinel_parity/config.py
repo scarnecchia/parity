@@ -63,7 +63,8 @@ class RunConfig:
         if self.pair_keys:
             if any(not isinstance(key, str) or not key for key in self.pair_keys):
                 raise ValueError("pair_keys entries must be nonempty strings")
-            if len(set(self.pair_keys)) != len(self.pair_keys):
+            folded = [key.casefold() for key in self.pair_keys]
+            if len(set(folded)) != len(folded):
                 raise ValueError("pair_keys must not repeat a column")
         if self.round_digits is not None and (
             isinstance(self.round_digits, bool) or self.round_digits < 1
