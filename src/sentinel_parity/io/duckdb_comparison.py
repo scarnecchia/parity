@@ -493,8 +493,9 @@ def _all_pair_differences_crossed(
     return row is not None and int(row[0] or 0) == 0
 
 
-# The exact whitespace set Python str.rstrip() strips (str.whitespace), so the
-# export marker matches the comparison text key for every value.
+# The exact codepoints str.rstrip() treats as whitespace, so the export
+# marker matches the comparison text key for every value. The drift pin
+# test fails if a Python upgrade ever changes this set.
 _WHITESPACE = (
     "chr(32)||chr(9)||chr(10)||chr(13)||chr(12)||chr(11)||chr(28)||chr(29)||chr(30)||chr(31)"
     "||chr(133)||chr(160)||chr(5760)"
@@ -507,7 +508,9 @@ _WHITESPACE = (
 def _missing_value_test(side: str) -> str:
     # Matches the comparison text key's missing rule exactly: a string envelope
     # whose value strips to nothing under Python's whitespace set compares as
-    # missing, and both export surfaces mark it identically.
+    # missing, and both export surfaces mark it identically. The canonical arm
+    # covers JSON-null scalar envelopes (None, NaN); string envelopes carry no
+    # canonical key, so the translate arm is their load-bearing test.
     return (
         f"(json_extract_string({side},'$.canonical')='null' "
         f"OR (json_extract_string({side},'$.type')='string' "

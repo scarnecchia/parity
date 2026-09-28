@@ -13,7 +13,7 @@ from sentinel_parity.core.export_policy import (
     WorkbookMeasurements,
     excel_omissions,
 )
-from sentinel_parity.io.duckdb_comparison import compare
+from sentinel_parity.io.duckdb_comparison import _WHITESPACE, compare
 from sentinel_parity.io.report_writer import _atomic_copy, publish
 from sentinel_parity.io.staging import stage
 from sentinel_parity.io.workbook_writer import safe_sheet_names, write_workbook
@@ -161,6 +161,11 @@ def test_preview_marks_nbsp_only_text_as_missing(tmp_path: Path) -> None:
     assert result["status"] == "FAIL"
     preview = result["preview_rows"][0]
     assert preview["sas"] == "\xa0 (compares as missing)"
+
+
+def test_missing_whitespace_set_matches_python_rstrip() -> None:
+    codes = sorted(int(item[4:-1]) for item in _WHITESPACE.split("||"))
+    assert codes == sorted(cp for cp in range(0x110000) if chr(cp).rstrip() == "")
 
 
 def test_preview_marks_clipped_whitespace_only_text_as_missing(tmp_path: Path) -> None:
