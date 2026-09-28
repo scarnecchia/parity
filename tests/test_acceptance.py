@@ -481,7 +481,7 @@ def test_run_log_jsonl_verbose_and_short_options(tmp_path: Path) -> None:
         "run_done",
     } <= names
     phases = {record["phase"] for record in events if record["event"] == "compare_phase"}
-    assert "load_tables" in phases
+    assert phases == {"load_tables"}
     start = next(record for record in events if record["event"] == "run_start")
     assert start["threads"] == 5
     allowed_keys = {

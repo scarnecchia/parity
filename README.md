@@ -182,7 +182,7 @@ With `id` set, these files are written into `parity-report/<id>/` so one report 
 
 `index.html` flags files without an equivalent at the top. Each dataset has a flat, side-by-side difference table and a link to its complete JSONL details. Each table row represents one differing column, not one source row. The report shows preview counts, clipped-cell indicators, and reasons for omitted rows. It also links to the workbook or explains why no workbook was generated.
 
-Preview row limits apply per dataset, not per side. Byte limits cover rendered table rows, including escaped text and markup, not the entire HTML report. Cell clipping changes only the preview. Complete values remain in JSONL. Matching rows appear in neither the preview nor JSONL.
+Preview row limits apply per dataset, not per side. The row limit bounds the rows the comparison fetches; byte budgets apply when the report renders those rows and cover rendered table rows, including escaped text and markup, not the entire HTML report. Cell clipping changes only the preview. Complete values remain in JSONL. Matching rows appear in neither the preview nor JSONL.
 
 `summary.json` includes the schema version, overall status, the request id as `request_id` (`null` when `id` is unset), package versions, execution limits, dataset entries, preview truncation counts, and `detail_links` mapping dataset IDs to relative JSONL paths. Dataset entries include names, status, reason, `conditions`, row counts, `matched_pairs`, `sas_only`, `python_only`, `row_order_mismatches`, and `detail_complete`. `row_order_mismatches` counts matched rows whose file positions differ — the comparison is order-independent, so reordered files still pass, and `index.html` flags this at the top of the dataset section. Available metadata includes reader schemas and metadata, original filenames, and original/normalized describe output for successfully compared pairs. One-sided entries never open their file, so the existing side's row counts are `null` and they carry no detail link, preview, or reader metadata; error entries differ from successful pairs.
 
@@ -195,7 +195,7 @@ Summary fields include:
 | `difference_row_count` | Number of entries across all JSONL `differences` arrays, not the number of JSONL records. Available per dataset and per run. |
 | `details_bytes` | Complete detail-file bytes, per dataset and per run. |
 | `preview_truncation` | Per-dataset `{shown_rows, omitted_rows, rendered_bytes, reasons}`. Reasons include `row_limit`, `dataset_byte_limit`, and `run_byte_limit`. |
-| `excel` | Run-level `{status, path, reasons, limits, measurements}`. Status is `generated`, `disabled`, `no_differences`, or `omitted`. |
+| `excel` | Run-level `{status, path, reasons, limits, measurements}`. Status is `generated`, `disabled`, `no_differences`, or `omitted`. Measurements cover the datasets staged while the workbook was still eligible; datasets compared after that report zero measurements. |
 
 For complete details, `shown_rows + omitted_rows` equals `difference_row_count`. The top-level `preview_truncation` maps dataset IDs to these measurements. Each dataset entry also contains its measurements.
 
@@ -229,7 +229,7 @@ A compared dataset carries `conditions`: every problem found, not just the first
 
 A dataset FAILs when any condition fails, WARNs when only warnings remain (which does not fail the run), and PASSes with none. `reason` repeats the most severe condition's code (`null` when clean).
 
-An `ERROR` dataset has `detail_complete: false`: do not interpret its zero counts as evidence of an empty input or expect complete JSONL details. Its reason is only the exception class, such as `TypeError` or `PermissionError`. Exception messages are redacted because reader/database errors can disclose cell values, paths, or SQL. Check type support, path permissions, and resource settings as appropriate; do not paste raw third-party errors into shared logs or tickets.
+An `ERROR` dataset has `detail_complete: false`: do not interpret its zero counts as evidence of an empty input or expect complete JSONL details. Its reason is only the exception class, such as `TypeError` or `PermissionError`. The run log records the same class name — plus errno and strerror for `OSError` — and never raw exception text, because reader and database errors can disclose cell values or paths. Dataset entries in `summary.json` and `index.html` do include the exception message as `error_message`; reports may contain sensitive data, so store and share them accordingly. Check type support, path permissions, and resource settings as appropriate; do not paste raw third-party errors into shared logs or tickets.
 
 ### JSONL details
 

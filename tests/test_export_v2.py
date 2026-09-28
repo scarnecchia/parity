@@ -135,13 +135,23 @@ def test_workbook_text_marks_missing_values_not_absent_rows(tmp_path: Path) -> N
     stage_path = tmp_path / "workbook.parquet"
     _compare(
         tmp_path,
-        {"id": [1, 2], "value": [None, "  "]},
-        {"id": [1, 2], "value": ["text", "full"]},
+        {"id": [1, 2, 3], "value": [None, "  ", "\t\n"]},
+        {"id": [1, 2, 3], "value": ["text", "full", "y"]},
         workbook_stage_path=stage_path,
         workbook_remaining={"rows": 10, "rows_per_dataset": 10, "bytes": 10_000, "sheets": 5},
     )
     staged = pl.read_parquet(stage_path).sort("pair_id")
-    assert staged["sas"].to_list() == ["(missing)", "   (compares as missing)"]
+    assert staged["sas"].to_list() == [
+        "(missing)",
+        "   (compares as missing)",
+        "\t\n (compares as missing)",
+    ]
+
+
+def test_preview_marks_whitespace_only_text_as_missing(tmp_path: Path) -> None:
+    result = _compare(tmp_path, {"v": ["\t\n"]}, {"v": ["y"]})
+    preview = result["preview_rows"][0]
+    assert preview["sas"] == "\t\n (compares as missing)"
 
 
 def test_excess_ties_pair_deterministically_by_staging_order(tmp_path: Path) -> None:
@@ -440,16 +450,27 @@ def test_preview_reasons_record_every_exceeded_budget(tmp_path: Path) -> None:
 
 
 def test_atomic_copy_fsyncs_before_publish(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    synced: list[int] = []
+    events: list[str] = []
     real_fsync = os.fsync
-    monkeypatch.setattr(os, "fsync", lambda fd: (synced.append(fd), real_fsync(fd))[1])
+    real_replace = os.replace
+
+    def track_fsync(fd: int) -> None:
+        events.append("fsync")
+        real_fsync(fd)
+
+    def track_replace(src: object, dst: object) -> None:
+        events.append("replace")
+        real_replace(src, dst)
+
     source = tmp_path / "source.jsonl"
     source.write_text("{}\n", encoding="utf-8")
     target = tmp_path / "details" / "copy.jsonl"
     target.parent.mkdir()
+    monkeypatch.setattr(os, "fsync", track_fsync)
+    monkeypatch.setattr(os, "replace", track_replace)
     _atomic_copy(source, target)
     assert target.read_text() == "{}\n"
-    assert synced
+    assert events == ["fsync", "replace"]
 
 
 def test_summary_preview_truncation_accounts_for_every_difference_row(tmp_path: Path) -> None:

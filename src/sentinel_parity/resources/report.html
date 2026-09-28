@@ -402,8 +402,8 @@ footer .build { font: var(--text-xs)/1.6 var(--mono); color: var(--ink-faint); o
         </tbody>
       </table>
     </div>
-    <p class="preview-note">Showing {{ truncation.get("shown_rows", preview_records|length) }} of {{ dataset.get("difference_row_count", 0) }} difference rows. {{ truncation.get("omitted_rows", 0) }} omitted by preview limits{% if truncation.get("reasons") %} ({{ truncation["reasons"]|join(", ") }}){% endif %}. Cell values ending in … were clipped for display.</p>
     {% endif %}
+    <p class="preview-note">Showing {{ truncation.get("shown_rows", preview_records|length) }} of {{ dataset.get("difference_row_count", 0) }} difference rows. {{ truncation.get("omitted_rows", 0) }} omitted by preview limits{% if truncation.get("reasons") %} ({{ truncation["reasons"]|join(", ") }}){% endif %}. Cell values ending in … were clipped for display.</p>
   </div>
   {% endif %}
 </section>

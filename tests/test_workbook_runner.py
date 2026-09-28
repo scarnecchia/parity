@@ -204,6 +204,32 @@ def test_excel_rejection_never_invokes_writer_or_leaves_stage(
     assert len(staged_paths) == 1 and not staged_paths[0].exists()
 
 
+def test_sheet_row_limit_names_only_the_tripping_dataset(tmp_path: Path) -> None:
+    sas, python = _inputs(tmp_path)
+    _second_pair(sas, python)
+    frame = pl.read_parquet(python / "msoc" / "second.parquet")
+    pl.concat([frame, frame.head(3)]).write_parquet(python / "msoc" / "second.parquet")
+    probe = tmp_path / "probe"
+    assert _run(sas, python, probe) == 1
+    rows = {
+        item["name"]: item["workbook_measurements"]["rows"]
+        for item in json.loads((probe / "summary.json").read_text())["datasets"]
+    }
+    small, large = rows["dplocal/source.sas7bdat"], rows["msoc/second.sas7bdat"]
+    assert large > small
+
+    sas2, python2 = _inputs(tmp_path / "bounded")
+    _second_pair(sas2, python2)
+    frame2 = pl.read_parquet(python2 / "msoc" / "second.parquet")
+    pl.concat([frame2, frame2.head(3)]).write_parquet(python2 / "msoc" / "second.parquet")
+    out = tmp_path / "out"
+    assert _run(sas2, python2, out, excel_max_rows_per_sheet=small) == 1
+    summary = json.loads((out / "summary.json").read_text())
+    tripper = next(item for item in summary["datasets"] if item["name"] == "msoc/second.sas7bdat")
+    assert summary["excel"]["reasons"] == [{"code": "sheet_row_limit", "dataset_id": tripper["id"]}]
+    assert summary["excel"]["measurements"]["rows"] == small
+
+
 @pytest.mark.parametrize("failure", ["open", "write", "close", "publish"])
 def test_excel_publish_failure_cleanup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str

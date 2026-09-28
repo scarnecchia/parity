@@ -81,6 +81,7 @@ def _execute(config: RunConfig) -> int:
     previews: dict[str, list[dict[str, Any]]] = {}
     preview_truncation: dict[str, dict[str, int]] = {}
     staged_paths: dict[str, Path] = {}
+    staged_ids: set[str] = set()
     workbook_reasons: list[dict[str, str | None]] = []
     workbook_remaining = {
         "rows": min(config.excel_max_rows, 1_048_575),
@@ -185,6 +186,7 @@ def _execute(config: RunConfig) -> int:
                 staged_path = result.get("workbook_stage_path")
                 if staged_path is not None and not workbook_reasons:
                     staged_paths[ident] = Path(staged_path)
+                    staged_ids.add(ident)
                     measurements = result["workbook_measurements"]
                     workbook_remaining["rows"] -= measurements["rows"]
                     workbook_remaining["bytes"] -= measurements["text_bytes"]
@@ -278,13 +280,17 @@ def _execute(config: RunConfig) -> int:
                 )
         status = "ERROR" if fatal else ("FAIL" if any_fail else ("WARN" if any_warn else "PASS"))
         datasets.sort(key=lambda item: item["name"].casefold())
+        # Datasets staged while the workbook was still eligible count toward
+        # the totals: their measurements describe the data a workbook would
+        # have held, even though a mid-run trip releases their staging files.
+        staged_items = [item for item in datasets if item["id"] in staged_ids]
         workbook_rows = sum(
-            int(item.get("workbook_measurements", {}).get("rows", 0)) for item in datasets
+            int(item.get("workbook_measurements", {}).get("rows", 0)) for item in staged_items
         )
         workbook_data_bytes = sum(
-            int(item.get("workbook_measurements", {}).get("text_bytes", 0)) for item in datasets
+            int(item.get("workbook_measurements", {}).get("text_bytes", 0)) for item in staged_items
         )
-        staged_datasets = [item for item in datasets if item["id"] in staged_paths]
+        staged_datasets = staged_items
         sheet_names = safe_sheet_names([item["name"] for item in staged_datasets])
         index_rows = [
             (
@@ -306,15 +312,15 @@ def _execute(config: RunConfig) -> int:
             default=0,
         )
         workbook_max_cell = max(
-            index_max_cell,
-            *(
+            [index_max_cell]
+            + [
                 int(item.get("workbook_measurements", {}).get("max_cell_chars", 0))
-                for item in datasets
-            ),
+                for item in staged_items
+            ]
         )
         workbook_sheets = 1 + len(staged_datasets)
         workbook_max_sheet_rows = max(
-            (int(item.get("workbook_measurements", {}).get("rows", 0)) for item in datasets),
+            (int(item.get("workbook_measurements", {}).get("rows", 0)) for item in staged_items),
             default=0,
         )
         workbook_measurements = WorkbookMeasurements(
@@ -337,19 +343,10 @@ def _execute(config: RunConfig) -> int:
         ]
         if len(index_rows) + 1 > 1_048_576 and config.excel:
             excel_reasons.append({"code": "index_row_limit", "dataset_id": None})
-        if (
-            index_max_cell > 32_767
-            and config.excel
-            and not any(reason["code"] == "cell_limit" for reason in excel_reasons)
-        ):
-            excel_reasons.append({"code": "cell_limit", "dataset_id": None})
-        for item in datasets:
-            if (
-                item.get("workbook_measurements", {}).get("rows", 0)
-                > min(config.excel_max_rows_per_sheet, 1_048_575)
-                and config.excel
-            ):
-                excel_reasons.append({"code": "sheet_row_limit", "dataset_id": item["id"]})
+        # workbook_max_cell already includes the Index cells, so the policy's
+        # cell_limit covers the index too. Per-dataset sheet_row_limit needs no
+        # final pass: staged datasets passed the mid-run per-dataset gate, and
+        # the gate's own attributed reasons carry forward below.
         has_workbook_differences = workbook_rows > 0 or any(
             item.get("conditions") for item in datasets if item["status"] != "PASS"
         )

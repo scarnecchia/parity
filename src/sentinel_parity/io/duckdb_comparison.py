@@ -135,7 +135,7 @@ def compare(
             pair_count = 0
         difference_rows = _scalar_count(connection, "SELECT count(*) FROM pair_cells")
         details_bytes = detail_path.stat().st_size if detail_path.exists() else 0
-        preview = _bounded_preview(connection, preview_rows, preview_cell_chars)
+        preview = _bounded_preview(connection, preview_cell_chars)
         # The aggregate scan is pure overhead when no workbook can be staged.
         workbook_measurements = (
             _workbook_measurements(connection)
@@ -334,8 +334,10 @@ def _compare_shared(
 
 
 def _bounded_preview(
-    connection: duckdb.DuckDBPyConnection, limit: int, cell_chars: int
+    connection: duckdb.DuckDBPyConnection, cell_chars: int
 ) -> list[dict[str, Any]]:
+    # preview_rows bounds this fetch; the byte budgets apply later at render
+    # time in report publication and never shrink the SQL LIMIT.
     rows = connection.execute(
         "SELECT pair_id,kind,column_name,sas_type,sas_canonical,sas_value,"
         "python_type,python_canonical,python_value,s_ordinal,p_ordinal FROM preview_source "
@@ -391,7 +393,10 @@ def _preview_value(
         return "(missing)"
     if value is None:
         return "(missing)"
-    if canonical == "null" or (kind == "string" and value == ""):
+    if canonical == "null" or (kind == "string" and not value.rstrip()):
+        # Same missing rule as the comparison text key (Unicode rstrip). The
+        # workbook SQL marker covers the ASCII whitespace set; rarer Unicode
+        # whitespace only diverges in that export.
         return f"{value} (compares as missing)"
     return value
 
@@ -487,7 +492,8 @@ def _workbook_cell_text(side: str) -> str:
         f"WHEN json_extract({side},'$.value') IS NULL THEN '(missing)' "
         f"WHEN json_extract_string({side},'$.canonical')='null' "
         f"OR (json_extract_string({side},'$.type')='string' "
-        f"AND trim(coalesce(json_extract_string({side},'$.value'),''))='') "
+        f"AND translate(coalesce(json_extract_string({side},'$.value'),''), "
+        f"chr(32)||chr(9)||chr(10)||chr(13)||chr(12)||chr(11), '')='') "
         f"THEN coalesce(json_extract_string({side},'$.value'),'') || ' (compares as missing)' "
         f"ELSE json_extract_string({side},'$.value') END"
     )
