@@ -53,6 +53,16 @@ def run_command(
         int | None, typer.Option("--preview-total-max-bytes")
     ] = None,
     preview_cell_chars: Annotated[int | None, typer.Option("--preview-cell-chars")] = None,
+    schema: Annotated[
+        Path | None,
+        typer.Option(
+            "--schema",
+            help=(
+                "TOML file mapping table names to per-table pair_keys; section names "
+                "are case-folded stems with one leading rNN_ prefix ignored."
+            ),
+        ),
+    ] = None,
     pair_keys: Annotated[
         str | None,
         typer.Option(
@@ -113,6 +123,7 @@ def run_command(
                 "preview_max_bytes": preview_max_bytes,
                 "preview_total_max_bytes": preview_total_max_bytes,
                 "preview_cell_chars": preview_cell_chars,
+                "schema": schema,
                 "pair_keys": declared_pair_keys,
                 "excel": excel,
                 "excel_max_sheets": excel_max_sheets,

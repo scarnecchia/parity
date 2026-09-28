@@ -1,0 +1,24 @@
+# Copy to schema.toml and run: parity run --schema schema.toml.
+# Each section names one table and configures it for this run.
+
+# Section names match the dataset identity: the case-folded filename stem with
+# one leading rNN_ prefix (r01_, r02_, ...) ignored — [r01_attrition] and
+# [attrition] both configure the table behind r01_attrition.sas7bdat or
+# attrition.parquet. A section matching no discovered table is a
+# configuration error, so a typo cannot silently do nothing.
+#
+# Currently supported per-table key: pair_keys — shared column names that
+# order the diagnostic row pairing first for that table. This overrides the
+# global pair_keys (config.toml / --pair-keys) for the table and never
+# changes pass/fail. Columns are case-folded to match staged columns.
+
+[r01_attrition]
+pair_keys = ["group", "level"]
+
+[headcount]
+pair_keys = ["employee_id"]
+
+# An empty pair_keys list falls back to automatic value-order pairing for
+# that table, overriding the global default.
+#[surveys]
+#pair_keys = []

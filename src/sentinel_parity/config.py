@@ -36,6 +36,7 @@ class RunConfig:
     excel_max_rows: int = 100_000
     excel_max_rows_per_sheet: int = 25_000
     excel_max_bytes: int = 104_857_600
+    schema: Path | None = None
 
     def __post_init__(self) -> None:
         positive_limits = (

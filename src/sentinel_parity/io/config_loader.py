@@ -29,6 +29,7 @@ _ALLOWED = {
     "excel_max_rows",
     "excel_max_rows_per_sheet",
     "excel_max_bytes",
+    "schema",
 }
 
 
@@ -55,7 +56,7 @@ def load_config(config_path: Path | None, overrides: dict[str, Any]) -> RunConfi
             values[key] = value
     if "sas_root" not in values or "python_root" not in values:
         raise ValueError("both sas_root and python_root are required")
-    for key in ("sas_root", "python_root", "output_dir", "temp_dir"):
+    for key in ("sas_root", "python_root", "output_dir", "temp_dir", "schema"):
         if key in values and values[key] is not None:
             if not isinstance(values[key], (str, Path)):
                 raise ValueError(f"{key} must be a string path")

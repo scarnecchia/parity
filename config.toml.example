@@ -12,6 +12,10 @@ python_root = "../parquet-output"
 # Default: "./parity-report" in the working directory when this key is omitted.
 output_dir = "./parity-report"
 
+# Optional string path: per-table schema file mapping table names to settings
+# such as pair_keys (see schema.toml.example).
+# schema = "schema.toml"
+
 # Optional string: request id written as a subfolder of the report directory, so
 # one report directory can hold many runs. Letters, numbers, and underscores only,
 # at most 64 characters; the reserved report name "details" is rejected.
@@ -47,6 +51,9 @@ preview_cell_chars = 512
 # Default: unset; excess rows pair by ascending value order across all
 # shared columns.
 pair_keys = ["group", "person_id"]
+
+# Per-table pairing keys override this global default for the named table;
+# see schema.toml.example and the --schema option.
 
 # Optional automatic Excel workbook. A limit breach omits the complete workbook.
 # Defaults: enabled, 100 sheets, 100000 difference rows total, 25000 per dataset, 100 MiB projected uncompressed cell text.

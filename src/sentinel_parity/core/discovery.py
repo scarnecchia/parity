@@ -9,6 +9,11 @@ from dataclasses import dataclass
 _IDENTITY_PREFIX = re.compile(r"^r[0-9]{2}_", re.IGNORECASE)
 
 
+def normalize_identity_stem(name: str) -> str:
+    """Case-fold a table name and strip one leading r[0-9][0-9]_ prefix."""
+    return _IDENTITY_PREFIX.sub("", name, count=1).casefold()
+
+
 @dataclass(frozen=True)
 class FileEntry:
     directory: str
@@ -18,8 +23,7 @@ class FileEntry:
 
     @property
     def key(self) -> tuple[str, str]:
-        identity_stem = _IDENTITY_PREFIX.sub("", self.stem, count=1)
-        return (self.directory.casefold(), identity_stem.casefold())
+        return (self.directory.casefold(), normalize_identity_stem(self.stem))
 
 
 @dataclass(frozen=True)
