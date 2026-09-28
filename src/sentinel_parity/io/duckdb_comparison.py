@@ -339,8 +339,9 @@ def _bounded_preview(
     # preview_rows bounds this fetch; the byte budgets apply later at render
     # time in report publication and never shrink the SQL LIMIT.
     rows = connection.execute(
-        "SELECT pair_id,kind,column_name,sas_type,sas_canonical,sas_value,"
-        "python_type,python_canonical,python_value,s_ordinal,p_ordinal FROM preview_source "
+        "SELECT pair_id,kind,column_name,sas_type,sas_canonical,sas_value,sas_missing,"
+        "python_type,python_canonical,python_value,python_missing,s_ordinal,p_ordinal "
+        "FROM preview_source "
         "ORDER BY pair_id,kind,s_ordinal,p_ordinal,column_name"
     ).fetchall()
     result: list[dict[str, Any]] = []
@@ -351,9 +352,11 @@ def _bounded_preview(
         sas_type,
         sas_canonical,
         sas_value,
+        sas_missing,
         python_type,
         python_canonical,
         python_value,
+        python_missing,
         s_ord,
         p_ord,
     ) in rows:
@@ -362,9 +365,11 @@ def _bounded_preview(
                 "pair_id": pair,
                 "kind": kind,
                 "column": column,
-                "sas": _preview_value(sas_type, sas_canonical, sas_value, s_ord is not None),
+                "sas": _preview_value(
+                    sas_type, sas_canonical, sas_value, s_ord is not None, sas_missing
+                ),
                 "python": _preview_value(
-                    python_type, python_canonical, python_value, p_ord is not None
+                    python_type, python_canonical, python_value, p_ord is not None, python_missing
                 ),
                 "sas_type": sas_type,
                 "python_type": python_type,
@@ -380,12 +385,18 @@ def _preview_projection(side: str) -> str:
         f"CASE WHEN {side} IS NULL THEN NULL ELSE "
         f"CASE WHEN length(coalesce(json_extract_string({side},'$.value'),{side}))>? "
         f"THEN left(coalesce(json_extract_string({side},'$.value'),{side}),?-1) || '…' "
-        f"ELSE coalesce(json_extract_string({side},'$.value'),{side}) END END {side}_value"
+        f"ELSE coalesce(json_extract_string({side},'$.value'),{side}) END END {side}_value,"
+        # Missing-ness is decided on the full value, not the clipped fragment.
+        f"{_missing_value_test(side)} AS {side}_missing"
     )
 
 
 def _preview_value(
-    kind: str | None, canonical: str | None, value: str | None, present: bool
+    kind: str | None,
+    canonical: str | None,
+    value: str | None,
+    present: bool,
+    missing: bool,
 ) -> str:
     if not present:
         return "(no row)"
@@ -393,10 +404,9 @@ def _preview_value(
         return "(missing)"
     if value is None:
         return "(missing)"
-    if canonical == "null" or (kind == "string" and not value.rstrip()):
-        # Same missing rule as the comparison text key (Unicode rstrip). The
-        # workbook SQL marker covers the ASCII whitespace set; rarer Unicode
-        # whitespace only diverges in that export.
+    if canonical == "null" or missing:
+        # The missing flag is computed in SQL on the full envelope, so clipping
+        # cannot hide it; see _missing_value_test for the whitespace rule.
         return f"{value} (compares as missing)"
     return value
 
@@ -483,6 +493,24 @@ def _all_pair_differences_crossed(
     return row is not None and int(row[0] or 0) == 0
 
 
+_ASCII_WHITESPACE = (
+    "chr(32)||chr(9)||chr(10)||chr(13)||chr(12)||chr(11)||chr(28)||chr(29)||chr(30)||chr(31)"
+)
+
+
+def _missing_value_test(side: str) -> str:
+    # Matches the comparison text key's missing rule for ASCII whitespace
+    # (space, tab, newlines, and the 1C-1F control separators). Rarer Unicode
+    # whitespace that Python rstrip() strips is the documented carve-out:
+    # both export surfaces mark exactly this ASCII set.
+    return (
+        f"(json_extract_string({side},'$.canonical')='null' "
+        f"OR (json_extract_string({side},'$.type')='string' "
+        f"AND translate(coalesce(json_extract_string({side},'$.value'),''), "
+        f"{_ASCII_WHITESPACE}, '')=''))"
+    )
+
+
 def _workbook_cell_text(side: str) -> str:
     # The staged COPY and the workbook measurements render through this one
     # expression, so budgets always describe the exact cells written.
@@ -490,10 +518,7 @@ def _workbook_cell_text(side: str) -> str:
     return (
         f"CASE WHEN kind='{absent}' THEN '(no row)' "
         f"WHEN json_extract({side},'$.value') IS NULL THEN '(missing)' "
-        f"WHEN json_extract_string({side},'$.canonical')='null' "
-        f"OR (json_extract_string({side},'$.type')='string' "
-        f"AND translate(coalesce(json_extract_string({side},'$.value'),''), "
-        f"chr(32)||chr(9)||chr(10)||chr(13)||chr(12)||chr(11), '')='') "
+        f"WHEN {_missing_value_test(side)} "
         f"THEN coalesce(json_extract_string({side},'$.value'),'') || ' (compares as missing)' "
         f"ELSE json_extract_string({side},'$.value') END"
     )
