@@ -135,8 +135,8 @@ def test_workbook_text_marks_missing_values_not_absent_rows(tmp_path: Path) -> N
     stage_path = tmp_path / "workbook.parquet"
     _compare(
         tmp_path,
-        {"id": [1, 2, 3, 4], "value": [None, "  ", "\t\n", "\x1c"]},
-        {"id": [1, 2, 3, 4], "value": ["text", "full", "y", "z"]},
+        {"id": [1, 2, 3, 4, 5], "value": [None, "  ", "\t\n", "\x1c", "\xa0"]},
+        {"id": [1, 2, 3, 4, 5], "value": ["text", "full", "y", "z", "w"]},
         workbook_stage_path=stage_path,
         workbook_remaining={"rows": 10, "rows_per_dataset": 10, "bytes": 10_000, "sheets": 5},
     )
@@ -146,6 +146,7 @@ def test_workbook_text_marks_missing_values_not_absent_rows(tmp_path: Path) -> N
         "   (compares as missing)",
         "\t\n (compares as missing)",
         "\x1c (compares as missing)",
+        "\xa0 (compares as missing)",
     ]
 
 
@@ -153,6 +154,13 @@ def test_preview_marks_whitespace_only_text_as_missing(tmp_path: Path) -> None:
     result = _compare(tmp_path, {"v": ["\t\n"]}, {"v": ["y"]})
     preview = result["preview_rows"][0]
     assert preview["sas"] == "\t\n (compares as missing)"
+
+
+def test_preview_marks_nbsp_only_text_as_missing(tmp_path: Path) -> None:
+    result = _compare(tmp_path, {"v": ["\xa0"]}, {"v": ["x"]})
+    assert result["status"] == "FAIL"
+    preview = result["preview_rows"][0]
+    assert preview["sas"] == "\xa0 (compares as missing)"
 
 
 def test_preview_marks_clipped_whitespace_only_text_as_missing(tmp_path: Path) -> None:

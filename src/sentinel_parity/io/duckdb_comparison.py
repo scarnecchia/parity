@@ -493,21 +493,26 @@ def _all_pair_differences_crossed(
     return row is not None and int(row[0] or 0) == 0
 
 
-_ASCII_WHITESPACE = (
+# The exact whitespace set Python str.rstrip() strips (str.whitespace), so the
+# export marker matches the comparison text key for every value.
+_WHITESPACE = (
     "chr(32)||chr(9)||chr(10)||chr(13)||chr(12)||chr(11)||chr(28)||chr(29)||chr(30)||chr(31)"
+    "||chr(133)||chr(160)||chr(5760)"
+    "||chr(8192)||chr(8193)||chr(8194)||chr(8195)||chr(8196)"
+    "||chr(8197)||chr(8198)||chr(8199)||chr(8200)||chr(8201)||chr(8202)"
+    "||chr(8232)||chr(8233)||chr(8239)||chr(8287)||chr(12288)"
 )
 
 
 def _missing_value_test(side: str) -> str:
-    # Matches the comparison text key's missing rule for ASCII whitespace
-    # (space, tab, newlines, and the 1C-1F control separators). Rarer Unicode
-    # whitespace that Python rstrip() strips is the documented carve-out:
-    # both export surfaces mark exactly this ASCII set.
+    # Matches the comparison text key's missing rule exactly: a string envelope
+    # whose value strips to nothing under Python's whitespace set compares as
+    # missing, and both export surfaces mark it identically.
     return (
         f"(json_extract_string({side},'$.canonical')='null' "
         f"OR (json_extract_string({side},'$.type')='string' "
         f"AND translate(coalesce(json_extract_string({side},'$.value'),''), "
-        f"{_ASCII_WHITESPACE}, '')=''))"
+        f"{_WHITESPACE}, '')=''))"
     )
 
 
