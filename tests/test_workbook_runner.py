@@ -66,10 +66,7 @@ def test_excel_runner_generates_index_and_text_sheets(tmp_path: Path) -> None:
         assert "1" in data_xml and "2" in data_xml
         assert "<f>" not in data_xml and "<hyperlinks" not in data_xml
         assert len(names) >= 2
-    assert not any(
-        item["name"] == "msoc/only.sas7bdat" and item.get("workbook_stage_path")
-        for item in summary["datasets"]
-    )
+    assert all("workbook_stage_path" not in item for item in summary["datasets"])
 
 
 def test_excel_disabled_no_differences_and_omission(tmp_path: Path) -> None:
@@ -92,6 +89,17 @@ def test_excel_disabled_no_differences_and_omission(tmp_path: Path) -> None:
     assert all(set(reason) == {"code", "dataset_id"} for reason in summary["excel"]["reasons"])
     assert not (out3 / "differences.xlsx").exists()
     assert "omitted" in (out3 / "index.html").read_text()
+
+
+def test_excel_disabled_reports_zero_workbook_measurements(tmp_path: Path) -> None:
+    sas, python = _inputs(tmp_path)
+    out = tmp_path / "out"
+    assert _run(sas, python, out, excel=False) == 1
+    excel = json.loads((out / "summary.json").read_text())["excel"]
+    assert excel["status"] == "disabled"
+    # No workbook can be staged, so the per-dataset scan is skipped; only the
+    # cheap Index projection remains in the measurements.
+    assert excel["measurements"]["rows"] == 0
 
 
 def _second_pair(sas: Path, python: Path) -> None:
@@ -120,6 +128,50 @@ def test_excel_rows_per_sheet_bounds_datasets_not_run_total(tmp_path: Path) -> N
     excel = json.loads((out / "summary.json").read_text())["excel"]
     assert excel["status"] == "generated"
     assert (out / "differences.xlsx").is_file()
+
+
+def test_final_gate_omission_releases_staging(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sas, python = _inputs(tmp_path)
+    _second_pair(sas, python)
+    long_stem = "e" * 100
+    shutil.copyfile(FIXTURE, sas / "msoc" / f"{long_stem}.sas7bdat")
+    third = pl.read_parquet(python / "dplocal" / "source.parquet")
+    third.write_parquet(python / "msoc" / f"{long_stem}.parquet")
+    original_compare = runner_module.compare
+    staged: list[Path] = []
+
+    def observe_compare(*args: object, **kwargs: object) -> dict:
+        stage_path = kwargs.get("workbook_stage_path")
+        if isinstance(stage_path, Path):
+            staged.append(stage_path)
+        return original_compare(*args, **kwargs)
+
+    monkeypatch.setattr(runner_module, "compare", observe_compare)
+    probe = tmp_path / "probe"
+    assert _run(sas, python, probe) == 1
+    text_bytes = [
+        item["workbook_measurements"]["text_bytes"]
+        for item in json.loads((probe / "summary.json").read_text())["datasets"]
+    ]
+    assert len(text_bytes) == 3 and all(size > 0 for size in text_bytes)
+
+    # Each dataset fits the byte budget as it is staged, but the total plus the
+    # Index sheet exceeds it, so the final gate omits the workbook.
+    staged.clear()
+    budget = sum(text_bytes) + 100
+    sas2, python2 = _inputs(tmp_path / "bounded")
+    _second_pair(sas2, python2)
+    shutil.copyfile(FIXTURE, sas2 / "msoc" / f"{long_stem}.sas7bdat")
+    third.write_parquet(python2 / "msoc" / f"{long_stem}.parquet")
+    out = tmp_path / "out"
+    assert _run(sas2, python2, out, excel_max_bytes=budget) == 1
+    summary = json.loads((out / "summary.json").read_text())
+    assert summary["excel"]["status"] == "omitted"
+    assert {"code": "byte_limit", "dataset_id": None} in summary["excel"]["reasons"]
+    assert len(staged) == 3
+    assert all(not path.exists() for path in staged)
 
 
 def test_excel_rejection_never_invokes_writer_or_leaves_stage(

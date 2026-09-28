@@ -13,6 +13,7 @@ from typing import Any
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from sentinel_parity.config import DETAIL_DIR_NAME
+from sentinel_parity.io.workbook_writer import WORKBOOK_COLUMNS
 
 TEMPLATE = Path(__file__).parents[1] / "resources"
 
@@ -61,12 +62,16 @@ def publish(
             if original_count > len(rows):
                 reasons.append("row_limit")
             for row in rows[:row_limit]:
+                # Budgets measure the bare fragment; the report emits it through
+                # an indented include, so published pages run a few bytes per
+                # row larger than rendered_bytes reports.
                 fragment = row_template.render(row=row)
                 size = len(fragment.encode("utf-8"))
                 if rendered_bytes + size > dataset_limit or size > remaining_bytes:
-                    reasons.append(
-                        "run_byte_limit" if size > remaining_bytes else "dataset_byte_limit"
-                    )
+                    if rendered_bytes + size > dataset_limit:
+                        reasons.append("dataset_byte_limit")
+                    if size > remaining_bytes:
+                        reasons.append("run_byte_limit")
                     break
                 accepted.append(row)
                 rendered_bytes += size
@@ -86,6 +91,7 @@ def publish(
             previews=previews,
             links=links,
             preview_truncation=preview_truncation,
+            workbook_columns=WORKBOOK_COLUMNS,
         )
         _atomic_text(summary_path, json.dumps(summary, ensure_ascii=False, indent=2) + "\n")
         _atomic_text(index_path, html)
@@ -114,7 +120,12 @@ def _atomic_copy(source: Path, target: Path) -> None:
     fd, temp_name = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
     os.close(fd)
     try:
-        shutil.copyfile(source, temp_name)
+        with open(source, "rb") as reader, open(temp_name, "wb") as writer:
+            shutil.copyfileobj(reader, writer)
+            # Same durability as _atomic_text: the bytes must survive a crash
+            # between the copy and the atomic replace.
+            writer.flush()
+            os.fsync(writer.fileno())
         os.replace(temp_name, target)
     except BaseException:
         Path(temp_name).unlink(missing_ok=True)

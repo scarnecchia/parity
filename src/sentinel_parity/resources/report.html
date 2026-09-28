@@ -384,17 +384,17 @@ footer .build { font: var(--text-xs)/1.6 var(--mono); color: var(--ink-faint); o
   {% endif %}
   {% set truncation = preview_truncation.get(dataset.id, {}) %}
   {% set preview_records = previews.get(dataset.id) or [] %}
+  {% if dataset.get("difference_row_count", 0) == 0 and dataset.status != "PASS" and dataset.get("conditions") %}
+  <p class="preview-note">This dataset has schema or counterpart conditions but no value-difference rows.</p>
+  {% endif %}
   {% if preview_records or truncation.get("omitted_rows", 0) %}
   <div class="preview">
     <h3>Difference preview{% if truncation.get("omitted_rows", 0) %} — {{ truncation["omitted_rows"] }} difference rows omitted{% endif %}</h3>
     {% if preview_records %}
-    {% if dataset.get("difference_row_count", 0) == 0 and dataset.status != "PASS" %}
-    <p class="preview-note">This dataset has schema or counterpart conditions but no value-difference rows.</p>
-    {% endif %}
     <p class="preview-note">Pairs are diagnostics, not proof of row correspondence. Values are clipped for display. The JSONL link contains the complete differences.</p>
     <div class="table-scroll" role="region" tabindex="0" aria-label="Difference preview table">
       <table>
-        <thead><tr><th scope="col">Pair</th><th scope="col">Column</th><th scope="col">SAS value</th><th scope="col">Parquet value</th><th scope="col">SAS type</th><th scope="col">Parquet type</th><th scope="col">SAS row</th><th scope="col">Parquet row</th><th scope="col">Kind</th></tr></thead>
+        <thead><tr>{% for label in workbook_columns %}<th scope="col">{{ label }}</th>{% endfor %}</tr></thead>
         <tbody>
         {% for row in preview_records %}
           {% include "preview_row.html" %}

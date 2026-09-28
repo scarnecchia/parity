@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 from sentinel_parity.config import DEFAULT_THREADS
 from sentinel_parity.core.comparison_sql import quote_identifier
 from sentinel_parity.io import run_log
+from sentinel_parity.io.workbook_writer import WORKBOOK_COLUMNS
 
 _COPY_NDJSON = "(FORMAT CSV, HEADER FALSE, DELIMITER '|', QUOTE '', ESCAPE '')"
 
@@ -127,7 +128,7 @@ def compare(
                 else:
                     conditions.append({"severity": "FAIL", "reason": "value_mismatch"})
         else:
-            _one_sided_no_shared(connection, left, right, union, preview_rows, preview_cell_chars)
+            _one_sided_no_shared(connection, left, right, preview_rows, preview_cell_chars)
             sas_only, python_only = left["rows"], right["rows"]
             _export_pair_cells(connection, detail_path, dataset_id)
             counts = {}
@@ -135,7 +136,12 @@ def compare(
         difference_rows = _scalar_count(connection, "SELECT count(*) FROM pair_cells")
         details_bytes = detail_path.stat().st_size if detail_path.exists() else 0
         preview = _bounded_preview(connection, preview_rows, preview_cell_chars)
-        workbook_measurements = _workbook_measurements(connection)
+        # The aggregate scan is pure overhead when no workbook can be staged.
+        workbook_measurements = (
+            _workbook_measurements(connection)
+            if workbook_stage_path is not None
+            else _workbook_zero_measurements()
+        )
         workbook_stage_reasons: list[str] = []
         if workbook_stage_path is not None and difference_rows:
             if workbook_remaining is None:
@@ -146,22 +152,8 @@ def compare(
             if not workbook_stage_reasons:
                 connection.execute(
                     "COPY (SELECT pair_rank AS pair_id,column_name AS column,"
-                    "CASE WHEN kind='only_python' THEN '(no row)' "
-                    "WHEN json_extract(sas,'$.value') IS NULL THEN '(missing)' "
-                    "WHEN json_extract_string(sas,'$.canonical')='null' "
-                    "OR (json_extract_string(sas,'$.type')='string' "
-                    "AND json_extract_string(sas,'$.value')='') "
-                    "THEN coalesce(json_extract_string(sas,'$.value'),'') || "
-                    "' (compares as missing)' "
-                    "ELSE json_extract_string(sas,'$.value') END AS sas,"
-                    "CASE WHEN kind='only_sas' THEN '(no row)' "
-                    "WHEN json_extract(python,'$.value') IS NULL THEN '(missing)' "
-                    "WHEN json_extract_string(python,'$.canonical')='null' "
-                    "OR (json_extract_string(python,'$.type')='string' "
-                    "AND json_extract_string(python,'$.value')='') "
-                    "THEN coalesce(json_extract_string(python,'$.value'),'') || "
-                    "' (compares as missing)' "
-                    "ELSE json_extract_string(python,'$.value') END AS python,"
+                    f"{_workbook_cell_text('sas')} AS sas,"
+                    f"{_workbook_cell_text('python')} AS python,"
                     "json_extract_string(sas,'$.type') AS sas_type,"
                     "json_extract_string(python,'$.type') AS python_type,s_ordinal AS sas_row,"
                     "p_ordinal AS python_row,kind FROM pair_cells "
@@ -248,7 +240,9 @@ def _compare_shared(
             f"CREATE TABLE {side}_pair AS SELECT *, "
             "row_number() OVER (ORDER BY "
             + ", ".join(f"{quote_identifier('k_' + name)} ASC NULLS FIRST" for name in shared)
-            + ") pair_rank "
+            # Ordinal breaks ties between excess rows equal on every shared
+            # column so identical reruns pair identically.
+            + ", ordinal) pair_rank "
             + f"FROM {side}_excess"
         )
         connection.execute(excess_sql)
@@ -406,7 +400,6 @@ def _one_sided_no_shared(
     connection: duckdb.DuckDBPyConnection,
     left: dict[str, Any],
     right: dict[str, Any],
-    union: list[str],
     preview_rows: int,
     cell_chars: int,
 ) -> None:
@@ -485,26 +478,36 @@ def _all_pair_differences_crossed(
     return row is not None and int(row[0] or 0) == 0
 
 
+def _workbook_cell_text(side: str) -> str:
+    # The staged COPY and the workbook measurements render through this one
+    # expression, so budgets always describe the exact cells written.
+    absent = "only_python" if side == "sas" else "only_sas"
+    return (
+        f"CASE WHEN kind='{absent}' THEN '(no row)' "
+        f"WHEN json_extract({side},'$.value') IS NULL THEN '(missing)' "
+        f"WHEN json_extract_string({side},'$.canonical')='null' "
+        f"OR (json_extract_string({side},'$.type')='string' "
+        f"AND trim(coalesce(json_extract_string({side},'$.value'),''))='') "
+        f"THEN coalesce(json_extract_string({side},'$.value'),'') || ' (compares as missing)' "
+        f"ELSE json_extract_string({side},'$.value') END"
+    )
+
+
+def _workbook_zero_measurements() -> dict[str, int]:
+    """Measurements for runs that can never stage workbook data."""
+    return {
+        "rows": 0,
+        "cell_bytes": 0,
+        "header_bytes": 0,
+        "text_bytes": 0,
+        "max_cell_chars": 0,
+        "sheets": 1,
+    }
+
+
 def _workbook_measurements(connection: duckdb.DuckDBPyConnection) -> dict[str, int]:
-    # Keep these projections identical to the values written to workbook Parquet.
-    sas_text = (
-        "CASE WHEN kind='only_python' THEN '(no row)' "
-        "WHEN json_extract(sas,'$.value') IS NULL THEN '(missing)' "
-        "WHEN json_extract_string(sas,'$.canonical')='null' "
-        "OR (json_extract_string(sas,'$.type')='string' "
-        "AND json_extract_string(sas,'$.value')='') "
-        "THEN coalesce(json_extract_string(sas,'$.value'),'') || ' (compares as missing)' "
-        "ELSE json_extract_string(sas,'$.value') END"
-    )
-    python_text = (
-        "CASE WHEN kind='only_sas' THEN '(no row)' "
-        "WHEN json_extract(python,'$.value') IS NULL THEN '(missing)' "
-        "WHEN json_extract_string(python,'$.canonical')='null' "
-        "OR (json_extract_string(python,'$.type')='string' "
-        "AND json_extract_string(python,'$.value')='') "
-        "THEN coalesce(json_extract_string(python,'$.value'),'') || ' (compares as missing)' "
-        "ELSE json_extract_string(python,'$.value') END"
-    )
+    sas_text = _workbook_cell_text("sas")
+    python_text = _workbook_cell_text("python")
     fields = (
         "CAST(pair_rank AS VARCHAR)",
         "column_name",
@@ -529,45 +532,8 @@ def _workbook_measurements(connection: duckdb.DuckDBPyConnection) -> dict[str, i
     ).fetchone()
     values = row or (0, 0, 0)
     has_rows = int(values[0] or 0) > 0
-    header_bytes = (
-        sum(
-            len(label.encode("utf-8"))
-            for label in (
-                "Pair",
-                "Column",
-                "SAS value",
-                "Parquet value",
-                "SAS type",
-                "Parquet type",
-                "SAS row",
-                "Parquet row",
-                "Kind",
-            )
-        )
-        if has_rows
-        else 0
-    )
-    header_chars = (
-        max(
-            map(
-                len,
-                (
-                    "Pair",
-                    "Column",
-                    "SAS value",
-                    "Parquet value",
-                    "SAS type",
-                    "Parquet type",
-                    "SAS row",
-                    "Parquet row",
-                    "Kind",
-                ),
-            ),
-            default=0,
-        )
-        if has_rows
-        else 0
-    )
+    header_bytes = sum(len(label.encode("utf-8")) for label in WORKBOOK_COLUMNS) if has_rows else 0
+    header_chars = max(map(len, WORKBOOK_COLUMNS), default=0) if has_rows else 0
     return {
         "rows": int(values[0] or 0),
         "cell_bytes": int(values[1] or 0),

@@ -80,7 +80,7 @@ def _execute(config: RunConfig) -> int:
     details: dict[str, Path] = {}
     previews: dict[str, list[dict[str, Any]]] = {}
     preview_truncation: dict[str, dict[str, int]] = {}
-    workbook_stage_paths: list[Path] = []
+    staged_paths: dict[str, Path] = {}
     workbook_reasons: list[dict[str, str | None]] = []
     workbook_remaining = {
         "rows": min(config.excel_max_rows, 1_048_575),
@@ -179,13 +179,12 @@ def _execute(config: RunConfig) -> int:
                                 "dataset_id": attributed if code == "sheet_row_limit" else None,
                             }
                         )
-                    for leftover in workbook_stage_paths:
+                    for leftover in staged_paths.values():
                         leftover.unlink(missing_ok=True)
-                    workbook_stage_paths.clear()
+                    staged_paths.clear()
                 staged_path = result.get("workbook_stage_path")
                 if staged_path is not None and not workbook_reasons:
-                    staged_path = Path(staged_path)
-                    workbook_stage_paths.append(staged_path)
+                    staged_paths[ident] = Path(staged_path)
                     measurements = result["workbook_measurements"]
                     workbook_remaining["rows"] -= measurements["rows"]
                     workbook_remaining["bytes"] -= measurements["text_bytes"]
@@ -239,9 +238,6 @@ def _execute(config: RunConfig) -> int:
                         "details_bytes": details_bytes,
                         "preview_truncation": truncation,
                         "workbook_measurements": result["workbook_measurements"],
-                        "workbook_stage_path": str(staged_path)
-                        if staged_path is not None
-                        else None,
                         "detail_complete": True,
                         "metadata": metadata,
                     }
@@ -288,7 +284,7 @@ def _execute(config: RunConfig) -> int:
         workbook_data_bytes = sum(
             int(item.get("workbook_measurements", {}).get("text_bytes", 0)) for item in datasets
         )
-        staged_datasets = [item for item in datasets if item.get("workbook_stage_path")]
+        staged_datasets = [item for item in datasets if item["id"] in staged_paths]
         sheet_names = safe_sheet_names([item["name"] for item in staged_datasets])
         index_rows = [
             (
@@ -376,6 +372,12 @@ def _execute(config: RunConfig) -> int:
             if has_workbook_differences
             else "no_differences"
         )
+        if workbook_status != "generated" and staged_paths:
+            # The workbook will not be written; release staging now instead of
+            # holding the files until run-temp cleanup.
+            for leftover in staged_paths.values():
+                leftover.unlink(missing_ok=True)
+            staged_paths.clear()
         summary = {
             "schema_version": 3,
             "details_schema_version": 2,
@@ -427,16 +429,7 @@ def _execute(config: RunConfig) -> int:
         workbook_source: Path | None = None
         if workbook_status == "generated":
             workbook_source = run_temp / "differences.xlsx"
-            write_workbook(
-                workbook_source,
-                datasets,
-                {
-                    str(item["id"]): Path(item["workbook_stage_path"])
-                    for item in datasets
-                    if item.get("workbook_stage_path")
-                },
-                run_temp,
-            )
+            write_workbook(workbook_source, datasets, dict(staged_paths), run_temp)
             summary["excel"]["path"] = "differences.xlsx"
         run_log.event("publish_start", datasets=len(datasets), details=len(details))
         try:

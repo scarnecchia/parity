@@ -80,7 +80,8 @@ def load_config(config_path: Path | None, overrides: dict[str, Any]) -> RunConfi
         value = values[key]
         if not isinstance(value, int) or isinstance(value, bool):
             raise ValueError(f"{key} must be an integer")
-        if value < 0 if key == "preview_rows" else value <= 0:
+        minimum = 0 if key == "preview_rows" else 1
+        if value < minimum:
             raise ValueError(
                 f"{key} must be {'nonnegative' if key == 'preview_rows' else 'positive'}"
             )

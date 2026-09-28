@@ -1,4 +1,5 @@
 import json
+import os
 import zipfile
 from pathlib import Path
 
@@ -13,7 +14,7 @@ from sentinel_parity.core.export_policy import (
     excel_omissions,
 )
 from sentinel_parity.io.duckdb_comparison import compare
-from sentinel_parity.io.report_writer import publish
+from sentinel_parity.io.report_writer import _atomic_copy, publish
 from sentinel_parity.io.staging import stage
 from sentinel_parity.io.workbook_writer import safe_sheet_names, write_workbook
 
@@ -130,18 +131,31 @@ def test_paired_mismatch_preserves_json_null_cell(tmp_path: Path) -> None:
     assert difference["python"]["value"] == "text"
 
 
-def test_workbook_text_marks_present_null_not_absent_row(tmp_path: Path) -> None:
+def test_workbook_text_marks_missing_values_not_absent_rows(tmp_path: Path) -> None:
     stage_path = tmp_path / "workbook.parquet"
     _compare(
         tmp_path,
-        {"id": [1], "value": [None]},
-        {"id": [1], "value": ["text"]},
+        {"id": [1, 2], "value": [None, "  "]},
+        {"id": [1, 2], "value": ["text", "full"]},
         workbook_stage_path=stage_path,
         workbook_remaining={"rows": 10, "rows_per_dataset": 10, "bytes": 10_000, "sheets": 5},
     )
-    staged = pl.read_parquet(stage_path)
-    sas_cell = staged.filter(pl.col("column") == "value")["sas"][0]
-    assert sas_cell == "(missing)"
+    staged = pl.read_parquet(stage_path).sort("pair_id")
+    assert staged["sas"].to_list() == ["(missing)", "   (compares as missing)"]
+
+
+def test_excess_ties_pair_deterministically_by_staging_order(tmp_path: Path) -> None:
+    result = _compare(
+        tmp_path,
+        {"key": [1, 1, 1], "sas_extra": ["a", "b", "c"]},
+        {"key": [1, 2], "py_extra": ["x", "y"]},
+    )
+    records = [json.loads(line) for line in Path(result["details_path"]).read_text().splitlines()]
+    paired = [row for row in records if row["kind"] == "paired_mismatch"]
+    one_sided = [row for row in records if row["kind"] == "only_sas"]
+    assert len(paired) == 1 and len(one_sided) == 1
+    assert paired[0]["sas_row"] == 1 and paired[0]["python_row"] == 1
+    assert one_sided[0]["sas_row"] == 2
 
 
 def test_type_only_crossed_differences_warn(tmp_path: Path) -> None:
@@ -195,9 +209,29 @@ def test_workbook_policy() -> None:
     )
 
 
+def test_safe_sheet_names_strip_edge_apostrophes() -> None:
+    names = safe_sheet_names(["'leading", "trailing'", "'", "ok'name"])
+    assert names["'leading"] == "leading"
+    assert names["trailing'"] == "trailing"
+    assert names["'"] == "Dataset"
+    assert names["ok'name"] == "ok'name"
+
+
 def test_excel_preflight_boundaries_and_rejection(tmp_path: Path) -> None:
     values = ({"value": [1, 2]}, {"value": [1, 3]})
-    probe = _compare(tmp_path / "probe", *values)
+    # The probe stages with generous budgets so its measurements reflect real
+    # workbook output; comparisons that cannot stage report zero measurements.
+    probe = _compare(
+        tmp_path / "probe",
+        *values,
+        workbook_stage_path=tmp_path / "probe" / "measure.parquet",
+        workbook_remaining={
+            "rows": 1_000_000,
+            "rows_per_dataset": 1_000_000,
+            "bytes": 1_000_000_000,
+            "sheets": 99,
+        },
+    )
     measurements = probe["workbook_measurements"]
     accepted_path = tmp_path / "accepted.parquet"
     accepted = _compare(
@@ -275,6 +309,35 @@ def test_config_export_limits_must_be_positive(tmp_path: Path) -> None:
         RunConfig(tmp_path, tmp_path, preview_max_bytes=0)
 
 
+def test_report_flags_condition_only_dataset(tmp_path: Path) -> None:
+    summary = {
+        "status": "FAIL",
+        "limits": {},
+        "datasets": [
+            {
+                "id": "cond",
+                "name": "cond/only",
+                "status": "FAIL",
+                "reason": "sas_only_columns",
+                "conditions": [
+                    {"severity": "FAIL", "reason": "sas_only_columns", "columns": ["extra"]}
+                ],
+                "difference_row_count": 0,
+            }
+        ],
+        "preview_truncation": {},
+    }
+    publish(
+        tmp_path,
+        summary,
+        {},
+        {"cond": []},
+        {"cond": {"shown_rows": 0, "omitted_rows": 0, "rendered_bytes": 0, "reasons": []}},
+    )
+    html = (tmp_path / "index.html").read_text()
+    assert "no value-difference rows" in html
+
+
 def test_preview_byte_boundaries_measure_the_rendered_fragment(tmp_path: Path) -> None:
     row = {
         "pair_id": 1,
@@ -334,6 +397,59 @@ def test_preview_byte_boundaries_measure_the_rendered_fragment(tmp_path: Path) -
     assert output["datasets"][0]["preview_truncation"]["rendered_bytes"] == exact_bytes
     html = (tmp_path / "report/index.html").read_text()
     assert fragment.strip() in html
+
+
+def test_preview_reasons_record_every_exceeded_budget(tmp_path: Path) -> None:
+    row = {
+        "pair_id": 1,
+        "column": "x",
+        "sas": "left",
+        "python": "right",
+        "kind": "paired_mismatch",
+        "sas_row": 0,
+        "python_row": 0,
+    }
+    resource_dir = Path(__file__).parents[1] / "src/sentinel_parity/resources"
+    env = Environment(loader=FileSystemLoader(resource_dir), autoescape=select_autoescape(["html"]))
+    exact = len(env.get_template("preview_row.html").render(row=row).encode("utf-8"))
+    source = tmp_path / "details.jsonl"
+    source.write_text("", encoding="utf-8")
+    summary = {
+        "status": "FAIL",
+        "limits": {
+            "preview_rows": 4,
+            "preview_max_bytes": exact - 1,
+            "preview_total_max_bytes": exact - 1,
+        },
+        "datasets": [
+            {
+                "id": "d1",
+                "name": "first",
+                "status": "FAIL",
+                "difference_row_count": 1,
+                "conditions": [],
+            }
+        ],
+    }
+    publish(tmp_path, summary, {}, {"d1": [row]}, {"d1": {}})
+    output = json.loads((tmp_path / "summary.json").read_text())
+    assert output["preview_truncation"]["d1"]["reasons"] == [
+        "dataset_byte_limit",
+        "run_byte_limit",
+    ]
+
+
+def test_atomic_copy_fsyncs_before_publish(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    synced: list[int] = []
+    real_fsync = os.fsync
+    monkeypatch.setattr(os, "fsync", lambda fd: (synced.append(fd), real_fsync(fd))[1])
+    source = tmp_path / "source.jsonl"
+    source.write_text("{}\n", encoding="utf-8")
+    target = tmp_path / "details" / "copy.jsonl"
+    target.parent.mkdir()
+    _atomic_copy(source, target)
+    assert target.read_text() == "{}\n"
+    assert synced
 
 
 def test_summary_preview_truncation_accounts_for_every_difference_row(tmp_path: Path) -> None:

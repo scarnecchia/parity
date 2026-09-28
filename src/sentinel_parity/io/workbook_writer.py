@@ -13,7 +13,7 @@ from typing import Any
 import pyarrow.parquet as pq
 import xlsxwriter
 
-_COLUMNS = (
+WORKBOOK_COLUMNS = (
     "Pair",
     "Column",
     "SAS value",
@@ -30,7 +30,7 @@ def safe_sheet_names(names: list[str]) -> dict[str, str]:
     used = {"index"}
     result: dict[str, str] = {}
     for name in names:
-        stem = re.sub(r"[\\/*?:\[\]]", "_", name)[:31] or "Dataset"
+        stem = re.sub(r"[\\/*?:\[\]]", "_", name)[:31].strip("'") or "Dataset"
         candidate = stem
         suffix = 1
         while candidate.casefold() in used:
@@ -97,7 +97,7 @@ def write_workbook(
                     continue
                 worksheet = workbook.add_worksheet(sheet)
                 worksheet.freeze_panes(1, 0)
-                for col, value in enumerate(_COLUMNS):
+                for col, value in enumerate(WORKBOOK_COLUMNS):
                     _write_text(worksheet, 0, col, value)
                 reader = pq.ParquetFile(staged[dataset["id"]]).iter_batches(  # type: ignore[no-untyped-call]
                     batch_size=batch_size
@@ -126,7 +126,7 @@ def write_workbook(
                         for col, raw_value in enumerate(values):
                             _write_text(worksheet, row_number, col, raw_value)
                         row_number += 1
-                worksheet.autofilter(0, 0, row_number - 1, len(_COLUMNS) - 1)
+                worksheet.autofilter(0, 0, row_number - 1, len(WORKBOOK_COLUMNS) - 1)
             workbook.close()
         except BaseException:
             with warnings.catch_warnings():
