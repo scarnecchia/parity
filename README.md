@@ -119,7 +119,7 @@ The default harness measures 10,000-row and 50,000-row pairs. The opt-in experim
 | `--preview-max-bytes` | `preview_max_bytes` | Positive integer: rendered preview-row bytes per dataset | `1048576` (1 MiB) |
 | `--preview-total-max-bytes` | `preview_total_max_bytes` | Positive integer: rendered preview-row bytes per run | `10485760` (10 MiB) |
 | `--preview-cell-chars` | `preview_cell_chars` | Positive integer: preview characters per cell | `512` |
-| `--pair-keys` | `pair_keys` | Comma-separated shared column names that order the diagnostic excess-row pairing first; remaining shared columns only break ties. Never changes pass/fail | Unset; excess rows pair by ascending value order across all shared columns |
+| `--pair-keys` / `--no-pair-keys` | `pair_keys` | `--pair-keys`: comma-separated shared column names that order the diagnostic excess-row pairing first; remaining shared columns only break ties. `--no-pair-keys` ignores the TOML value for this run. Never changes pass/fail | Unset; excess rows pair by ascending value order across all shared columns |
 | `--excel` / `--no-excel` | `excel` | Boolean: enable automatic workbook export | `true` |
 | `--excel-max-sheets` | `excel_max_sheets` | Positive integer: workbook sheets, including Index | `100` |
 | `--excel-max-rows` | `excel_max_rows` | Positive integer: flat difference rows per workbook | `100000` |

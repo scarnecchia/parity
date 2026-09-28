@@ -63,6 +63,10 @@ def run_command(
             ),
         ),
     ] = None,
+    no_pair_keys: Annotated[
+        bool,
+        typer.Option("--no-pair-keys", help="Ignore any TOML pair_keys for this run."),
+    ] = False,
     excel: Annotated[bool | None, typer.Option("--excel/--no-excel")] = None,
     excel_max_sheets: Annotated[int | None, typer.Option("--excel-max-sheets")] = None,
     excel_max_rows: Annotated[int | None, typer.Option("--excel-max-rows")] = None,
@@ -92,6 +96,8 @@ def run_command(
     if pair_keys and pair_keys.strip():
         names = tuple(name.strip() for name in pair_keys.split(",") if name.strip())
         declared_pair_keys = names or None
+    if no_pair_keys:
+        declared_pair_keys = ()
     try:
         config_value = load_config(
             config,

@@ -241,6 +241,22 @@ def test_pair_keys_never_change_severity(tmp_path: Path) -> None:
         assert result["type_mismatched_columns"] == ["g"]
 
 
+def test_pair_keys_caveat_when_export_exceeds_crossed_columns(tmp_path: Path) -> None:
+    # Declaring g realigns the keyed pairs so they differ outside the crossed
+    # columns; severity stays WARN and the condition carries the qualifier.
+    result = _compare(
+        tmp_path,
+        {"a": [1, 2], "g": ["p", "q"]},
+        {"a": [2, 1], "g": [10, 20]},
+        pair_keys=("g",),
+    )
+    assert result["status"] == "WARN"
+    assert result["reason"] == "type_mismatch"
+    condition = next(item for item in result["conditions"] if item["reason"] == "type_mismatch")
+    assert condition["pairing_note"]
+    assert result["differing_column_counts"] == {"a": 2, "g": 2}
+
+
 def test_report_explains_pairing_basis_flags_key_rows_and_reasons(tmp_path: Path) -> None:
     row = {
         "pair_id": 1,
@@ -299,6 +315,21 @@ def test_report_explains_pairing_basis_flags_key_rows_and_reasons(tmp_path: Path
         in html
     )
     assert "(dataset-2)" not in html
+
+    summary["datasets"][0]["conditions"] = [
+        {
+            "severity": "WARN",
+            "reason": "type_mismatch",
+            "columns": ["g"],
+            "pairing_note": (
+                "That verdict is measured on the automatic pairing; the declared "
+                "pairing keys also pair rows whose differences fall outside these columns"
+            ),
+        }
+    ]
+    publish(tmp_path / "caveat", summary, {}, {"dataset-2": []}, {"dataset-2": {}})
+    caveat_html = (tmp_path / "caveat/index.html").read_text()
+    assert "That verdict is measured on the automatic pairing" in caveat_html
 
     output = json.loads((tmp_path / "summary.json").read_text())
     resource_dir = Path(__file__).parents[1] / "src/sentinel_parity/resources"

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import time
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import duckdb
 
@@ -110,29 +110,48 @@ def compare(
         counts: dict[str, int] = {}
         pair_count = 0
         if shared:
-            matched, sas_only, python_only, order_mismatches, counts, pair_count, all_crossed = (
-                _compare_shared(
-                    connection,
-                    left,
-                    right,
-                    shared,
-                    union,
-                    left_names,
-                    right_names,
-                    detail_path,
-                    dataset_id,
-                    preview_rows,
-                    preview_cell_chars,
-                    pair_keys=effective_pair_keys,
-                    crossed=crossed,
-                )
+            (
+                matched,
+                sas_only,
+                python_only,
+                order_mismatches,
+                counts,
+                pair_count,
+                all_crossed,
+                export_all_crossed,
+            ) = _compare_shared(
+                connection,
+                left,
+                right,
+                shared,
+                union,
+                left_names,
+                right_names,
+                detail_path,
+                dataset_id,
+                preview_rows,
+                preview_cell_chars,
+                pair_keys=effective_pair_keys,
+                crossed=crossed,
             )
             if sas_only or python_only:
                 type_explains = sas_only == python_only == pair_count and all_crossed
                 if type_explains:
-                    conditions.append(
-                        {"severity": "WARN", "reason": "type_mismatch", "columns": crossed}
-                    )
+                    condition: dict[str, Any] = {
+                        "severity": "WARN",
+                        "reason": "type_mismatch",
+                        "columns": crossed,
+                    }
+                    if not export_all_crossed:
+                        # The exported pairing also pairs rows that differ
+                        # outside these columns; the pass verdict comes from
+                        # the automatic pairing and must not overclaim.
+                        condition["pairing_note"] = (
+                            "That verdict is measured on the automatic pairing; "
+                            "the declared pairing keys also pair rows whose "
+                            "differences fall outside these columns"
+                        )
+                    conditions.append(condition)
                 else:
                     conditions.append({"severity": "FAIL", "reason": "value_mismatch"})
         else:
@@ -200,6 +219,24 @@ def compare(
         connection.close()
 
 
+class SharedOutcome(NamedTuple):
+    """Severity classification plus the exported pairing diagnostics.
+
+    all_crossed is measured on the automatic all-shared-column ordering and
+    drives severity; export_all_crossed is measured on the exported (possibly
+    pair_keys-reordered) pairing and qualifies the report claim.
+    """
+
+    matched: int
+    sas_only: int
+    python_only: int
+    order_mismatches: int
+    counts: dict[str, int]
+    pair_count: int
+    all_crossed: bool
+    export_all_crossed: bool
+
+
 def _compare_shared(
     connection: duckdb.DuckDBPyConnection,
     left: dict[str, Any],
@@ -214,7 +251,7 @@ def _compare_shared(
     cell_chars: int,
     pair_keys: list[str],
     crossed: list[str],
-) -> tuple[int, int, int, int, dict[str, int], int, bool]:
+) -> SharedOutcome:
     keys = ", ".join(quote_identifier("k_" + name) for name in shared)
     for side in ("sas", "python"):
         ranked_sql = (
@@ -335,6 +372,7 @@ def _compare_shared(
     counts: dict[str, int] = {}
     pair_count = 0
     all_crossed = False
+    export_all_crossed = False
     if sas_only or python_only:
         counts = _difference_counts(connection)
         pair_count = _scalar_count(
@@ -350,6 +388,8 @@ def _compare_shared(
         # keyed ordering may realign; the private classification counts above
         # stay on the automatic pass so severity never moves.
         counts = _difference_counts(connection)
+        if sas_only or python_only:
+            export_all_crossed = _all_pair_differences_crossed(connection, crossed)
     _export_pair_cells(connection, detail_path, dataset_id)
     connection.execute(
         "CREATE TEMP TABLE preview_source AS SELECT pair_rank AS pair_id,kind,column_name,"
@@ -370,14 +410,15 @@ def _compare_shared(
         + " WHERE l.ordinal != r.ordinal"
     )
     order = connection.execute(order_query).fetchone()
-    return (
-        matched,
-        sas_only,
-        python_only,
-        int(order[0] if order else 0),
-        counts,
-        pair_count,
-        all_crossed,
+    return SharedOutcome(
+        matched=matched,
+        sas_only=sas_only,
+        python_only=python_only,
+        order_mismatches=int(order[0] if order else 0),
+        counts=counts,
+        pair_count=pair_count,
+        all_crossed=all_crossed,
+        export_all_crossed=export_all_crossed,
     )
 
 

@@ -362,7 +362,7 @@ footer .build { font: var(--text-xs)/1.6 var(--mono); color: var(--ink-faint); o
     {%- elif condition.reason == "python_only_columns" -%}
     Parquet has {{ condition.columns|length }} column{{ "s" if condition.columns|length != 1 }} SAS lacks ({{ column_list(condition.columns) }}), so those values are not compared.
     {%- elif condition.reason == "type_mismatch" -%}
-    Differences are limited to those character vs numeric columns, so this dataset passes.
+    Differences are limited to those character vs numeric columns, so this dataset passes.{% if condition.pairing_note %} {{ condition.pairing_note }}.{% endif %}
     {%- elif condition.reason == "value_mismatch" -%}
     {%- if pairs %}{{ pairs }} row pair{{ "s" if pairs != 1 }} do{{ "es" if pairs == 1 }} not match. Differing columns: {% for name, count in counts.items() %}<span class="col-name">{{ name }}</span> ({{ count }} row{{ "s" if count != 1 }}){{ ", " if not loop.last }}{% endfor %}. {% endif -%}
     {%- if dataset.sas_only > pairs %}{{ dataset.sas_only - pairs }} row{{ "s" if (dataset.sas_only - pairs) != 1 }} appear{{ "s" if (dataset.sas_only - pairs) == 1 }} only in SAS. {% endif -%}
