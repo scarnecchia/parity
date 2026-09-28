@@ -62,9 +62,7 @@ def publish(
             if original_count > len(rows):
                 reasons.append("row_limit")
             for row in rows[:row_limit]:
-                # Budgets measure the bare fragment; the report emits it through
-                # an indented include, so published pages run a few bytes per
-                # row larger than rendered_bytes reports.
+                # The reported byte count excludes indentation added by the template include.
                 fragment = row_template.render(row=row)
                 size = len(fragment.encode("utf-8"))
                 if rendered_bytes + size > dataset_limit or size > remaining_bytes:
@@ -122,8 +120,8 @@ def _atomic_copy(source: Path, target: Path) -> None:
     try:
         with open(source, "rb") as reader, open(temp_name, "wb") as writer:
             shutil.copyfileobj(reader, writer)
-            # Same durability as _atomic_text: the bytes must survive a crash
-            # between the copy and the atomic replace.
+            # Flush and fsync so the copied artifact survives a crash before
+            # the atomic replace.
             writer.flush()
             os.fsync(writer.fileno())
         os.replace(temp_name, target)

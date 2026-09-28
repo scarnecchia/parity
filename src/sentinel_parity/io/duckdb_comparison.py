@@ -136,7 +136,7 @@ def compare(
         difference_rows = _scalar_count(connection, "SELECT count(*) FROM pair_cells")
         details_bytes = detail_path.stat().st_size if detail_path.exists() else 0
         preview = _bounded_preview(connection, preview_cell_chars)
-        # The aggregate scan is pure overhead when no workbook can be staged.
+        # Skip this aggregate scan when workbook staging is disabled.
         workbook_measurements = (
             _workbook_measurements(connection)
             if workbook_stage_path is not None
@@ -336,8 +336,7 @@ def _compare_shared(
 def _bounded_preview(
     connection: duckdb.DuckDBPyConnection, cell_chars: int
 ) -> list[dict[str, Any]]:
-    # preview_rows bounds this fetch; the byte budgets apply later at render
-    # time in report publication and never shrink the SQL LIMIT.
+    # The row limit bounds this fetch; byte budgets apply during rendering.
     rows = connection.execute(
         "SELECT pair_id,kind,column_name,sas_type,sas_canonical,sas_value,sas_missing,"
         "python_type,python_canonical,python_value,python_missing,s_ordinal,p_ordinal "
@@ -405,8 +404,7 @@ def _preview_value(
     if value is None:
         return "(missing)"
     if canonical == "null" or missing:
-        # The missing flag is computed in SQL on the full envelope, so clipping
-        # cannot hide it; see _missing_value_test for the whitespace rule.
+        # SQL checks the full envelope before clipping, preserving its missing status.
         return f"{value} (compares as missing)"
     return value
 
@@ -493,9 +491,7 @@ def _all_pair_differences_crossed(
     return row is not None and int(row[0] or 0) == 0
 
 
-# The exact codepoints str.rstrip() treats as whitespace, so the export
-# marker matches the comparison text key for every value. The drift pin
-# test fails if a Python upgrade ever changes this set.
+# Keep SQL whitespace aligned with str.rstrip(). The drift test pins Python upgrades.
 _WHITESPACE = (
     "chr(32)||chr(9)||chr(10)||chr(13)||chr(12)||chr(11)||chr(28)||chr(29)||chr(30)||chr(31)"
     "||chr(133)||chr(160)||chr(5760)"
@@ -506,11 +502,7 @@ _WHITESPACE = (
 
 
 def _missing_value_test(side: str) -> str:
-    # Matches the comparison text key's missing rule exactly: a string envelope
-    # whose value strips to nothing under Python's whitespace set compares as
-    # missing, and both export surfaces mark it identically. The canonical arm
-    # covers JSON-null scalar envelopes (None, NaN); string envelopes carry no
-    # canonical key, so the translate arm is their load-bearing test.
+    # String envelopes lack canonical keys, so SQL must test Python's whitespace set directly.
     return (
         f"(json_extract_string({side},'$.canonical')='null' "
         f"OR (json_extract_string({side},'$.type')='string' "

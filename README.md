@@ -24,7 +24,7 @@ Use Python >=3.12.13 and Git. These commands use a POSIX shell. Validation cover
 
    ```sh
    mkdir -p .tmp
-   TMPDIR="$PWD/.tmp" pip install -e .
+   TMPDIR="$PWD/.tmp" .venv/bin/python -m pip install -e .
    ```
 
    The local directory avoids a full RAM-backed `/tmp` (`tmpfs`) during installation. Runtime dependencies include `XlsxWriter>=3.2,<4` for Excel export.
@@ -62,7 +62,7 @@ Open `parity-report/index.html` directly in a browser. The HTML report has no ne
 Use the source checkout and virtual environment from [Install and run](#install-and-run). Install the development extras from the repository root:
 
 ```sh
-TMPDIR="$PWD/.tmp" pip install -e '.[dev]'
+TMPDIR="$PWD/.tmp" .venv/bin/python -m pip install -e '.[dev]'
 export TMPDIR="$PWD/.tmp"
 ```
 
@@ -124,7 +124,7 @@ The default harness measures 10,000-row and 50,000-row pairs. The opt-in experim
 | `--excel-max-rows` | `excel_max_rows` | Positive integer: flat difference rows per workbook | `100000` |
 | `--excel-max-rows-per-sheet` | `excel_max_rows_per_sheet` | Positive integer: flat difference rows per dataset sheet | `25000` |
 | `--excel-max-bytes` | `excel_max_bytes` | Positive integer: projected uncompressed cell text bytes, including value cells, type labels, headers, and Index | `104857600` (100 MiB) |
-| `--round` | `round_digits` | Nonnegative integer: round all numeric values — including coerced numeric text — to N digits after the decimal point (nearest, ties away from zero) before comparison | Omitted; raw values compare |
+| `--round`, `--round-digits` | `round_digits` | Positive integer: round numeric values, including coerced numeric text, to N decimal places before comparison. Ties round away from zero | Omitted; raw values compare |
 | `--threads` | `threads` | Positive integer: DuckDB worker threads for comparison | `4` |
 | `--verbose` | None | Flag: echo structured run-log events to stderr as they happen | Not set |
 | `--help` | None | Flag: show help and exit (`parity --help` or `parity run --help`) | Not set |
@@ -147,7 +147,7 @@ DuckDB validates the resource-limit strings. These settings limit DuckDB executi
 - Only immediate files are scanned, not nested directories. SAS inputs use `.sas7bdat`; Python inputs use `.parquet`. Extensions are case-insensitive.
 - Dataset identity is the subdirectory plus the case-folded filename stem; one leading `r` plus two digits and an underscore is ignored for pairing on either side. For example, `dplocal/People.SAS7BDAT` pairs with `dplocal/people.parquet`, not `msoc/people.parquet`.
 - Duplicate identities on either side are rejected. Matching-extension symlinks and non-file entries are rejected.
-- A one-sided file produces a `FAIL` dataset if readable. If there are no matched dataset pairs anywhere across the two subdirectories, the run is a configuration error instead.
+- A one-sided file produces a `FAIL` dataset without opening the file or checking its contents. If neither subdirectory contains a matched dataset pair, the run is a configuration error instead.
 - Inputs are never modified. Output and configured temporary locations cannot equal or be inside either input root. The report directory — `output_dir`, or `output_dir`/`<id>` when `id` is set — must be absent or empty; existing reports are not overwritten. Concurrent runs writing the same report directory are unsupported.
 
 ## Interpret the results
@@ -156,13 +156,13 @@ DuckDB validates the resource-limit strings. These settings limit DuckDB executi
 
 | Code | Meaning |
 | --- | --- |
-| `0` | All discovered datasets pass — including datasets that warned only on character-vs-numeric column differences. |
+| `0` | All discovered datasets have status `PASS` or `WARN`. Warnings include extra Parquet columns and character-vs-numeric differences. |
 | `1` | Comparisons completed, but at least one dataset failed: missing counterpart, missing SAS columns in Parquet, or shared-value mismatches. |
 | `2` | Configuration, input, unsupported-data, resource, report-writing, or interruption error. Dataset errors produce overall `ERROR` when a report can be written. |
 
 Errors take precedence over comparison failures: `ERROR` / `2` overrides `FAIL` / `1`, which overrides `WARN` / `PASS` / `0`. A configuration or report-writing error may leave no complete report.
 
-A completed comparison reports `WARN` instead of `FAIL` when every unmatched occurrence is explained by a character-vs-numeric column (one side numeric, the other text) — remaining differences like unparseable text in an otherwise numeric column. The dataset entry lists those columns in `type_mismatched_columns`, and `index.html` notes them at the top of the dataset section.
+Shared-value differences produce a `type_mismatch` warning when unmatched counts are equal and every difference falls within character-vs-numeric columns. These columns have numeric values on one side and text on the other, such as unparseable text in an otherwise numeric column. Other conditions can still make the dataset fail. The dataset entry lists these columns in `type_mismatched_columns`. The HTML report identifies them at the top of the dataset section.
 
 ### Report files
 
@@ -182,7 +182,9 @@ With `id` set, these files are written into `parity-report/<id>/` so one report 
 
 `index.html` flags files without an equivalent at the top. Each dataset has a flat, side-by-side difference table and a link to its complete JSONL details. Each table row represents one differing column, not one source row. The report shows preview counts, clipped-cell indicators, and reasons for omitted rows. It also links to the workbook or explains why no workbook was generated.
 
-Preview row limits apply per dataset, not per side. The row limit bounds the rows the comparison fetches; byte budgets apply when the report renders those rows and cover rendered table rows, including escaped text and markup, not the entire HTML report. Cell clipping changes only the preview. Complete values remain in JSONL. Matching rows appear in neither the preview nor JSONL.
+Preview row limits apply per dataset, not per side. SQL limits the fetched rows and clips cell text before Python receives it. Byte budgets apply during rendering. They count UTF-8 bytes in table-row fragments, including escaped text and markup, but exclude final indentation and the rest of the HTML. Cell clipping changes only the preview. Complete values remain in JSONL. Matching rows appear in neither the preview nor JSONL.
+
+The preview and workbook mark blank or whitespace-only text with `(compares as missing)`. This uses the same whitespace rule as comparison: Python `str.rstrip()` leaves an empty string. The test uses the full value, so preview clipping cannot change its meaning.
 
 `summary.json` includes the schema version, overall status, the request id as `request_id` (`null` when `id` is unset), package versions, execution limits, dataset entries, preview truncation counts, and `detail_links` mapping dataset IDs to relative JSONL paths. Dataset entries include names, status, reason, `conditions`, row counts, `matched_pairs`, `sas_only`, `python_only`, `row_order_mismatches`, and `detail_complete`. `row_order_mismatches` counts matched rows whose file positions differ — the comparison is order-independent, so reordered files still pass, and `index.html` flags this at the top of the dataset section. Available metadata includes reader schemas and metadata, original filenames, and original/normalized describe output for successfully compared pairs. One-sided entries never open their file, so the existing side's row counts are `null` and they carry no detail link, preview, or reader metadata; error entries differ from successful pairs.
 
@@ -195,7 +197,9 @@ Summary fields include:
 | `difference_row_count` | Number of entries across all JSONL `differences` arrays, not the number of JSONL records. Available per dataset and per run. |
 | `details_bytes` | Complete detail-file bytes, per dataset and per run. |
 | `preview_truncation` | Per-dataset `{shown_rows, omitted_rows, rendered_bytes, reasons}`. Reasons include `row_limit`, `dataset_byte_limit`, and `run_byte_limit`. |
-| `excel` | Run-level `{status, path, reasons, limits, measurements}`. Status is `generated`, `disabled`, `no_differences`, or `omitted`. Measurements cover the datasets staged while the workbook was still eligible; datasets compared after that report zero measurements. |
+| `excel` | Run-level `{status, path, reasons, limits, measurements}`. Status is `generated`, `disabled`, `no_differences`, or `omitted`. `limits` records configured budgets. `measurements` contains `rows`, `text_bytes`, and `max_cell_chars`. |
+
+Excel row measurements cover datasets staged while the workbook was still eligible, even if the runner later deletes their staging files. Text-byte and maximum-cell measurements also include Index text for every dataset. Datasets compared after omission report zero `workbook_measurements`. These measurements do not describe all differences when the workbook is omitted. The summary does not expose temporary `workbook_stage_path` values.
 
 For complete details, `shown_rows + omitted_rows` equals `difference_row_count`. The top-level `preview_truncation` maps dataset IDs to these measurements. Each dataset entry also contains its measurements.
 
@@ -209,7 +213,9 @@ Excel export is automatic. Disable it with `excel = false` in TOML or `--no-exce
 
 The workbook is all-or-nothing. Any exceeded sheet, row, byte, or Excel cell limit omits the entire workbook. Complete JSONL remains available. The summary records explicit omission reasons as `{code, dataset_id}` objects. Run-level reasons use a null dataset ID. The workbook path is null unless its status is `generated`.
 
-The byte budget measures projected uncompressed cell text: staged value strings, type labels, and headers, plus Index text measured in the runner. It does not predict compressed XLSX size or total temporary disk use. Excel's hard limits still apply when configured budgets are larger, including at most 1,048,575 data rows per dataset sheet. Cells over 32,767 characters cause omission rather than truncation. Omission reasons use `{code, dataset_id}`; run-level reasons have a null dataset ID.
+The byte budget measures projected uncompressed cell text: staged value strings, type labels, and headers, plus Index text measured in the runner. It does not predict compressed XLSX size or total temporary disk use. Hard caps apply even when configured budgets are larger: 100 sheets including Index, and 1,048,575 difference rows per workbook or dataset sheet. Cells over 32,767 characters cause omission rather than truncation.
+
+The runner stages per-dataset Parquet files only while the workbook remains eligible. When it becomes ineligible, the runner deletes those files and skips further workbook staging. XlsxWriter writes eligible workbooks in constant-memory mode. The writer finalizes the workbook before atomic publication.
 
 Source values and Int64 pair/row identifiers remain text to prevent numeric precision loss. Source text cannot become formulas or hyperlinks. Workbook temporary XML can exceed the final compressed file size. DuckDB memory and spill limits do not cap workbook temporary files or total process memory.
 
@@ -222,10 +228,10 @@ A compared dataset carries `conditions`: every problem found, not just the first
 | Condition | Severity | Meaning |
 | --- | --- | --- |
 | `missing_counterpart` | FAIL | The file has no equivalent on the other side; the file is never read. |
-| `sas_only_columns` | FAIL | Parquet lacks columns present in SAS, so no row can fully match. |
+| `sas_only_columns` | FAIL | Parquet lacks columns present in SAS. Shared-column values can still match. |
 | `python_only_columns` | WARN | Parquet has extra columns SAS lacks; their values are not compared. |
-| `value_mismatch` | FAIL | Unmatched rows differ in shared columns beyond character-vs-numeric coercion. |
-| `type_mismatch` | WARN | Every difference is inside character-vs-numeric columns, so the dataset passes. |
+| `value_mismatch` | FAIL | Unmatched counts differ, or paired rows differ outside character-vs-numeric columns. |
+| `type_mismatch` | WARN | Unmatched counts are equal, and every shared-value difference is inside character-vs-numeric columns. Other conditions can still make the dataset fail. |
 
 A dataset FAILs when any condition fails, WARNs when only warnings remain (which does not fail the run), and PASSes with none. `reason` repeats the most severe condition's code (`null` when clean).
 
@@ -242,7 +248,7 @@ JSONL v2 contains nested paired differences only. It has no full-row match recor
 | `pair_id` | Diagnostic excess-row rank ordered by canonical values across all shared columns. Null when the datasets have no shared columns. |
 | `kind` | `paired_mismatch`, `only_sas`, or `only_python`. |
 | `sas_row`, `python_row` | Original zero-based staging ordinals. Null means that row is absent. |
-| `differences` | Array of `{column, sas, python}` entries with original typed cell payloads. |
+| `differences` | Array of `{column, sas, python}` entries with original typed cell payloads, ordered by column name. This array identifies which columns differ. |
 
 A paired record includes only differing shared columns. A one-sided excess row includes each available column once, with null on the absent side. Datasets with no shared columns produce separate one-sided records, not fabricated pairs. Schema differences remain in summary and report metadata. JSONL v2 has no `absent_column` envelopes.
 

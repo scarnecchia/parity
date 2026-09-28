@@ -130,8 +130,7 @@ def write_workbook(
             workbook.close()
         except BaseException:
             with warnings.catch_warnings():
-                # A failure after the first close leaves cleanup closing an
-                # already finalized workbook; that repeat close is intentional.
+                # Cleanup may close the workbook again after a failed close.
                 warnings.filterwarnings(
                     "ignore", message=r"Calling close\(\) on already closed file\."
                 )
