@@ -16,16 +16,12 @@ from importlib.metadata import version
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import polars as pl
-import pyarrow.parquet as pq
-
-from sentinel_parity.core.discovery import FileEntry, pair_files
+from sentinel_parity.core.discovery import pair_files
 from sentinel_parity.io import run_log
 from sentinel_parity.io.discovery import discover, validate_roots_and_output
-from sentinel_parity.io.duckdb_comparison import _unsupported, compare
+from sentinel_parity.io.duckdb_comparison import compare
 from sentinel_parity.io.report_writer import publish
-from sentinel_parity.io.sas_input import stage_sas_input
-from sentinel_parity.io.staging import _encode_column, stage
+from sentinel_parity.io.staging import stage
 
 if TYPE_CHECKING:
     from sentinel_parity.config import RunConfig
@@ -87,46 +83,32 @@ def _execute(config: RunConfig) -> int:
     any_fail = bool(pairing.sas_only or pairing.python_only)
     any_warn = False
     try:
-        for entry in pairing.sas_only:
-            ident = uuid.uuid4().hex
-            detail = run_temp / f"{ident}.jsonl"
-            name = f"{entry.directory}/{entry.filename}"
-            run_log.event("dataset_start", dataset=ident, name=name)
-            started = time.monotonic()
-            try:
-                staged_sas = stage_sas_input(Path(entry.path), run_temp)
-                rows = _row_count(str(staged_sas), "sas")
-                metadata = _metadata(str(staged_sas), "sas")
-                _write_single_side_failure(
-                    detail,
-                    ident,
-                    entry,
-                    "sas",
-                    config.batch_size,
-                    "missing_counterpart",
-                    reader_path=str(staged_sas),
-                    round_digits=config.round_digits,
-                )
-                details[ident] = detail
-                previews[ident], preview_truncation[ident], _, _ = _preview(
-                    detail, config.preview_rows
-                )
+        # Pairing already proved these files have no equivalent on the other
+        # side, so they are never opened: unmatched inputs can be huge, and
+        # staging them would only recover counts the comparison cannot use.
+        for side, entries in (("sas", pairing.sas_only), ("python", pairing.python_only)):
+            for entry in entries:
+                ident = uuid.uuid4().hex
+                name = f"{entry.directory}/{entry.filename}"
+                run_log.event("dataset_start", dataset=ident, name=name)
+                started = time.monotonic()
+                rows: int | None = None  # unknown: the file is deliberately not read
                 datasets.append(
                     {
                         "id": ident,
-                        "name": f"{entry.directory}/{entry.filename}",
+                        "name": name,
                         "status": "FAIL",
                         "reason": "missing_counterpart",
-                        "sas_rows": rows,
-                        "python_rows": 0,
+                        "sas_rows": rows if side == "sas" else 0,
+                        "python_rows": 0 if side == "sas" else rows,
                         "matched_pairs": 0,
-                        "sas_only": rows,
-                        "python_only": 0,
+                        "sas_only": rows if side == "sas" else 0,
+                        "python_only": 0 if side == "sas" else rows,
                         "differing_column_counts": {},
                         "differing_pair_count": 0,
                         "conditions": [{"severity": "FAIL", "reason": "missing_counterpart"}],
-                        "detail_complete": True,
-                        "metadata": metadata,
+                        "detail_complete": False,
+                        "metadata": {},
                     }
                 )
                 run_log.event(
@@ -135,68 +117,8 @@ def _execute(config: RunConfig) -> int:
                     name=name,
                     status="FAIL",
                     reason="missing_counterpart",
-                    sas_rows=rows,
-                    python_rows=0,
                     duration_s=round(time.monotonic() - started, 3),
                 )
-            except Exception as exc:
-                fatal = True
-                run_log.error("dataset_error", exc, dataset=ident, name=name)
-                datasets.append(_one_sided_error(ident, entry, exc))
-        for entry in pairing.python_only:
-            ident = uuid.uuid4().hex
-            detail = run_temp / f"{ident}.jsonl"
-            name = f"{entry.directory}/{entry.filename}"
-            run_log.event("dataset_start", dataset=ident, name=name)
-            started = time.monotonic()
-            try:
-                rows = _row_count(entry.path, "python")
-                metadata = _metadata(entry.path, "python")
-                _write_single_side_failure(
-                    detail,
-                    ident,
-                    entry,
-                    "python",
-                    config.batch_size,
-                    "missing_counterpart",
-                    round_digits=config.round_digits,
-                )
-                details[ident] = detail
-                previews[ident], preview_truncation[ident], _, _ = _preview(
-                    detail, config.preview_rows
-                )
-                datasets.append(
-                    {
-                        "id": ident,
-                        "name": f"{entry.directory}/{entry.filename}",
-                        "status": "FAIL",
-                        "reason": "missing_counterpart",
-                        "sas_rows": 0,
-                        "python_rows": rows,
-                        "matched_pairs": 0,
-                        "sas_only": 0,
-                        "python_only": rows,
-                        "differing_column_counts": {},
-                        "differing_pair_count": 0,
-                        "conditions": [{"severity": "FAIL", "reason": "missing_counterpart"}],
-                        "detail_complete": True,
-                        "metadata": metadata,
-                    }
-                )
-                run_log.event(
-                    "dataset_done",
-                    dataset=ident,
-                    name=name,
-                    status="FAIL",
-                    reason="missing_counterpart",
-                    sas_rows=0,
-                    python_rows=rows,
-                    duration_s=round(time.monotonic() - started, 3),
-                )
-            except Exception as exc:
-                fatal = True
-                run_log.error("dataset_error", exc, dataset=ident, name=name)
-                datasets.append(_one_sided_error(ident, entry, exc))
         for sas, python in pairing.matched:
             ident = uuid.uuid4().hex
             dataset_work = run_temp / f"dataset-{ident}"
@@ -308,7 +230,7 @@ def _execute(config: RunConfig) -> int:
         status = "ERROR" if fatal else ("FAIL" if any_fail else ("WARN" if any_warn else "PASS"))
         datasets.sort(key=lambda item: item["name"].casefold())
         summary = {
-            "schema_version": 1,
+            "schema_version": 2,
             "status": status,
             "run_at": datetime.now(UTC).isoformat(timespec="seconds"),
             "request_id": config.id,
@@ -385,96 +307,6 @@ def _warn_on_tmpfs_temp(config: RunConfig) -> None:
         "counts against RAM; pass --temp-dir to place the run temp on real disk",
         file=sys.stderr,
     )
-
-
-def _row_count(path: str, kind: str) -> int:
-    if kind == "sas":
-        import polars_readstat
-
-        return int(polars_readstat.ScanReadstat(path).metadata["row_count"])
-    return int(pq.ParquetFile(path).metadata.num_rows)  # type: ignore[no-untyped-call]
-
-
-def _metadata(path: str, kind: str) -> dict[str, Any]:
-    if kind == "sas":
-        import polars_readstat
-
-        reader = polars_readstat.ScanReadstat(path)
-        return {
-            "schema": {key: str(value) for key, value in reader.schema.items()},
-            "reader": reader.metadata,
-        }
-    return {"schema": {key: str(value) for key, value in pl.read_parquet_schema(path).items()}}
-
-
-def _write_single_side_failure(
-    destination: Path,
-    ident: str,
-    entry: FileEntry,
-    side: str,
-    batch_size: int,
-    reason: str,
-    *,
-    reader_path: str | None = None,
-    round_digits: int | None = None,
-) -> None:
-    if side == "sas":
-        import polars_readstat
-
-        frame = polars_readstat.scan_readstat(reader_path or entry.path, batch_size=batch_size)
-    else:
-        frame = pl.scan_parquet(entry.path)
-    schema = frame.collect_schema()
-    if any(_unsupported(str(dtype)) for dtype in schema.dtypes()):
-        raise TypeError("unsupported logical column type")
-    columns = list(schema.names())
-    names = {name.casefold(): name for name in columns}
-    if len(names) != len(columns):
-        raise ValueError("duplicate normalized column names")
-    prefix = (
-        '{"schema_version":1,"dataset_id":'
-        + json.dumps(ident)
-        + ',"side":'
-        + json.dumps(side)
-        + ',"staging_row_number":'
-    )
-    middle = ',"status":"FAIL","reason":' + json.dumps(reason) + ',"values":{'
-    with destination.open("w", encoding="utf-8") as output:
-        ordinal = 0
-        for batch in frame.collect_batches(chunk_size=batch_size):
-            parts: list[pl.Expr] = [pl.lit(prefix)]
-            parts.append(pl.arange(ordinal, ordinal + batch.height, dtype=pl.Int64).cast(pl.Utf8))
-            parts.append(pl.lit(middle))
-            for index, (normalized, original) in enumerate(names.items()):
-                series = batch.get_column(original).rename(normalized)
-                _, payloads = _encode_column(series, round_digits)
-                if index:
-                    parts.append(pl.lit(","))
-                parts.append(pl.lit(json.dumps(normalized) + ":"))
-                parts.append(pl.lit(payloads))
-            parts.append(pl.lit("}}"))
-            lines = batch.select(pl.concat_str(*parts).alias("line")).to_series()
-            if lines.len():
-                output.write("\n".join(lines.to_list()) + "\n")
-            ordinal += batch.height
-
-
-def _one_sided_error(ident: str, entry: FileEntry, exc: Exception) -> dict[str, Any]:
-    return {
-        "id": ident,
-        "name": f"{entry.directory}/{entry.filename}",
-        "status": "ERROR",
-        "reason": type(exc).__name__,
-        "error_message": str(exc),
-        "sas_rows": 0,
-        "python_rows": 0,
-        "matched_pairs": 0,
-        "sas_only": 0,
-        "python_only": 0,
-        "conditions": [],
-        "detail_complete": False,
-        "metadata": {},
-    }
 
 
 def _preview(
