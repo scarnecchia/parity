@@ -346,6 +346,10 @@ def _compare_shared(
         for table in ("pair_cells", "pair_differences", "sas_pair", "python_pair"):
             connection.execute(f"DROP TABLE {table}")
         build_difference_tables(keys_order)
+        # Public diagnostic counts must describe the exported pairs, which the
+        # keyed ordering may realign; the private classification counts above
+        # stay on the automatic pass so severity never moves.
+        counts = _difference_counts(connection)
     _export_pair_cells(connection, detail_path, dataset_id)
     connection.execute(
         "CREATE TEMP TABLE preview_source AS SELECT pair_rank AS pair_id,kind,column_name,"

@@ -190,10 +190,15 @@ def test_pair_keys_order_diagnostic_pairing(tmp_path: Path) -> None:
     # Automatic ordering ranks by a first: excess rows pair on equal a and
     # differ only in z.
     assert all(columns == {"z"} for columns in paired_columns(automatic))
+    assert automatic["differing_column_counts"] == {"z": 2}
     # Declared keys rank by z first: the same excess rows now pair on equal z
-    # and differ only in a.
+    # and differ only in a. Diagnostic counts describe the exported pairs.
     assert keyed["pair_keys"] == ["z"]
     assert all(columns == {"a"} for columns in paired_columns(keyed))
+    assert keyed["differing_column_counts"] == {"a": 2}
+    # Severity is pairing-independent: classification stays on the automatic
+    # pass even though the exported pairs changed.
+    assert automatic["status"] == keyed["status"] == "FAIL"
 
 
 def test_pair_keys_dropped_when_missing_from_shared_columns(tmp_path: Path) -> None:
