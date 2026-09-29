@@ -37,6 +37,7 @@ class RunConfig:
     excel_max_rows_per_sheet: int = 25_000
     excel_max_bytes: int = 104_857_600
     schema: Path | None = None
+    ignore_pair_keys: bool = False
 
     def __post_init__(self) -> None:
         positive_limits = (
@@ -61,6 +62,10 @@ class RunConfig:
             )
         if not isinstance(self.excel, bool):
             raise ValueError("excel must be a boolean")
+        if not isinstance(self.ignore_pair_keys, bool):
+            raise ValueError("ignore_pair_keys must be a boolean")
+        if self.schema is not None and not isinstance(self.schema, Path):
+            raise ValueError("schema must be a string path")
         if self.pair_keys:
             if any(not isinstance(key, str) or not key for key in self.pair_keys):
                 raise ValueError("pair_keys entries must be nonempty strings")

@@ -31,23 +31,19 @@ if TYPE_CHECKING:
 
 
 def _table_pair_keys(config: RunConfig, pairing: Pairing) -> dict[str, tuple[str, ...]]:
-    """Resolve per-table pairing keys from the optional schema.toml file."""
+    """Resolve per-table pairing keys from the optional schema.toml file.
+
+    Validation always runs so a typo is reported even when the keys would not
+    be applied; application is suppressed by ignore_pair_keys.
+    """
     if config.schema is None:
         return {}
     tables = load_schema(config.schema)
-    stems = {
-        normalize_identity_stem(entry.stem)
-        for entry in (
-            *pairing.sas_only,
-            *pairing.python_only,
-            *(sas for sas, _ in pairing.matched),
-            *(python for _, python in pairing.matched),
-        )
-    }
-    unknown = sorted(set(tables) - stems)
+    compared = {normalize_identity_stem(sas.stem) for sas, _ in pairing.matched}
+    unknown = sorted(set(tables) - compared)
     if unknown:
         raise ValueError(
-            "schema.toml has sections matching no discovered table: " + ", ".join(unknown)
+            "schema.toml has sections matching no compared table: " + ", ".join(unknown)
         )
     run_log.event("schema_loaded", tables=len(tables))
     return tables
@@ -162,7 +158,13 @@ def _execute(config: RunConfig) -> int:
             ident = uuid.uuid4().hex
             # Per-table schema.toml keys override the global pair_keys default;
             # both are then filtered to the columns this dataset shares.
-            pair_keys = table_pair_keys.get(normalize_identity_stem(sas.stem), config.pair_keys)
+            # ignore_pair_keys (--no-pair-keys) suppresses every declared
+            # source, including the schema file.
+            pair_keys = (
+                ()
+                if config.ignore_pair_keys
+                else table_pair_keys.get(normalize_identity_stem(sas.stem), config.pair_keys)
+            )
             dataset_work = run_temp / f"dataset-{ident}"
             dataset_work.mkdir()
             name = f"{sas.directory}/{sas.filename}"

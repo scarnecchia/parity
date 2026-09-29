@@ -75,7 +75,13 @@ def run_command(
     ] = None,
     no_pair_keys: Annotated[
         bool,
-        typer.Option("--no-pair-keys", help="Ignore any TOML pair_keys for this run."),
+        typer.Option(
+            "--no-pair-keys",
+            help=(
+                "Run without any declared pairing keys: overrides the TOML "
+                "pair_keys, --pair-keys, and schema.toml for this run."
+            ),
+        ),
     ] = False,
     excel: Annotated[bool | None, typer.Option("--excel/--no-excel")] = None,
     excel_max_sheets: Annotated[int | None, typer.Option("--excel-max-sheets")] = None,

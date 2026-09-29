@@ -4,13 +4,16 @@
 # Section names match the dataset identity: the case-folded filename stem with
 # one leading rNN_ prefix (r01_, r02_, ...) ignored — [r01_attrition] and
 # [attrition] both configure the table behind r01_attrition.sas7bdat or
-# attrition.parquet. A section matching no discovered table is a
-# configuration error, so a typo cannot silently do nothing.
+# attrition.parquet. Matching is by stem across ALL directories: one section
+# configures that table in dplocal and msoc alike. A section matching no
+# compared table is a configuration error, so a typo cannot silently do
+# nothing.
 #
 # Currently supported per-table key: pair_keys — shared column names that
 # order the diagnostic row pairing first for that table. This overrides the
 # global pair_keys (config.toml / --pair-keys) for the table and never
 # changes pass/fail. Columns are case-folded to match staged columns.
+# --no-pair-keys suppresses every declared pairing key for a run.
 
 [r01_attrition]
 pair_keys = ["group", "level"]

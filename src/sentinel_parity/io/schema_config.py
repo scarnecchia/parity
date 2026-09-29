@@ -24,7 +24,7 @@ def load_schema(path: Path) -> dict[str, tuple[str, ...]]:
     """
     try:
         values = tomllib.loads(path.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError) as exc:
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
         raise ValueError(f"failed to read valid TOML schema file: {path}") from exc
     tables: dict[str, tuple[str, ...]] = {}
     for name, section in values.items():
@@ -38,6 +38,9 @@ def load_schema(path: Path) -> dict[str, tuple[str, ...]]:
             raise ValueError(
                 f"schema section [{name}] pair_keys must be a list of nonempty column names"
             )
+        folded = [key.casefold() for key in keys]
+        if len(set(folded)) != len(folded):
+            raise ValueError(f"schema section [{name}] pair_keys must not repeat a column")
         stem = normalize_identity_stem(name)
         if not stem:
             raise ValueError(f"schema section [{name}] normalizes to an empty table name")

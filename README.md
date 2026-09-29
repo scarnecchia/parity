@@ -120,7 +120,7 @@ The default harness measures 10,000-row and 50,000-row pairs. The opt-in experim
 | `--preview-total-max-bytes` | `preview_total_max_bytes` | Positive integer: rendered preview-row bytes per run | `10485760` (10 MiB) |
 | `--preview-cell-chars` | `preview_cell_chars` | Positive integer: preview characters per cell | `512` |
 | `--pair-keys` / `--no-pair-keys` | `pair_keys` | `--pair-keys`: comma-separated shared column names that order the diagnostic excess-row pairing first; remaining shared columns only break ties; an empty value falls back to TOML. `--no-pair-keys` overrides both the TOML value and `--pair-keys` for this run. Never changes pass/fail | Unset; excess rows pair by ascending value order across all shared columns |
-| `--schema` | `schema` | String path to a per-table schema TOML file (`schema.toml.example`); section names are case-folded table stems with one leading `rNN_` prefix ignored, mapping to per-table `pair_keys` that override the global default. Sections matching no discovered table are an error | Unset |
+| `--schema` | `schema` | String path to a per-table schema TOML file (`schema.toml.example`); section names are case-folded table stems with one leading `rNN_` prefix ignored — matching by stem across all directories — mapping to per-table `pair_keys` that override the global default. Sections matching no compared table are an error | Unset |
 | `--excel` / `--no-excel` | `excel` | Boolean: enable automatic workbook export | `true` |
 | `--excel-max-sheets` | `excel_max_sheets` | Positive integer: workbook sheets, including Index | `100` |
 | `--excel-max-rows` | `excel_max_rows` | Positive integer: flat difference rows per workbook | `100000` |

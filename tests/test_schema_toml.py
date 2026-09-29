@@ -31,6 +31,7 @@ def test_load_schema_rejects_bad_sections(tmp_path: Path) -> None:
         "[t]\nunknown = 1\n",
         "[t]\npair_keys = [1]\n",
         '[t]\npair_keys = [""]\n',
+        '[t]\npair_keys = ["ID", "id"]\n',
         "[t]\nnot_a_table = 3\n",
         "[r01_t]\npair_keys = []\n\n[t]\npair_keys = []\n",
     )
@@ -97,5 +98,53 @@ def test_schema_toml_unknown_section_is_an_error(tmp_path: Path) -> None:
     sas, python = _setup_tables(tmp_path)
     schema = _write_schema(tmp_path / "schema.toml", '[nope]\npair_keys = ["x"]\n')
 
-    with pytest.raises(ValueError, match="matching no discovered table"):
+    with pytest.raises(ValueError, match="matching no compared table"):
         run(RunConfig(sas, python, tmp_path / "out", schema=schema))
+
+
+def test_shipped_schema_example_loads() -> None:
+    schema = Path(__file__).resolve().parents[1] / "schema.toml.example"
+
+    assert load_schema(schema) == {
+        "attrition": ("group", "level"),
+        "headcount": ("employee_id",),
+    }
+
+
+def test_schema_overrides_global_and_empty_and_unconfigured(tmp_path: Path) -> None:
+    sas, python = _setup_tables(tmp_path)
+    shutil.copyfile(FIXTURE, sas / "dplocal" / "third.sas7bdat")
+    if Path(".parity-fixtures/productsales.parquet").is_file():
+        frame = pl.read_parquet(".parity-fixtures/productsales.parquet")
+    else:
+        import polars_readstat
+
+        frame = polars_readstat.ScanReadstat(str(FIXTURE)).df.collect()
+    differing = frame.with_columns((pl.col("ACTUAL") + 1).alias("ACTUAL"))
+    differing.write_parquet(python / "dplocal" / "third.parquet")
+    schema = _write_schema(
+        tmp_path / "schema.toml",
+        '[r01_people]\npair_keys = ["ACTUAL"]\n\n[plain]\npair_keys = []\n',
+    )
+    out = tmp_path / "out"
+
+    assert (
+        run(
+            RunConfig(
+                sas,
+                python,
+                out,
+                schema=schema,
+                pair_keys=("ACTUAL",),
+            )
+        )
+        == 1
+    )
+
+    keys = {
+        item["name"]: item["pair_keys"]
+        for item in json.loads((out / "summary.json").read_text())["datasets"]
+    }
+    assert keys["dplocal/r01_people.sas7bdat"] == ["actual"]
+    assert keys["dplocal/plain.sas7bdat"] == []
+    assert keys["dplocal/third.sas7bdat"] == ["actual"]
