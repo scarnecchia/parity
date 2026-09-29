@@ -1,11 +1,9 @@
 # pattern: Imperative Shell
 """Structured JSONL run logging: file output always, stderr echo when verbose.
 
-Every event is one JSON object carrying a wall-clock timestamp, elapsed
-seconds, an event name, and semantic fields (counts, durations, paths,
-identifiers). Exceptions are classified, never quoted: only the class name
-and, for OSError, the errno and strerror reach the log, so cell values and
-reader/database message text never enter logs or console output.
+Events contain timestamps, elapsed seconds, names, counts, durations, paths,
+and identifiers. Log exception classes, not messages. For OSError, include
+errno and strerror. Never log cell values or reader/database exception text.
 """
 
 from __future__ import annotations

@@ -33,11 +33,9 @@ if TYPE_CHECKING:
 def _table_pair_keys(config: RunConfig, pairing: Pairing) -> dict[str, tuple[str, ...]]:
     """Resolve per-table pairing keys from the optional schema.toml file.
 
-    Validation always runs so a typo is reported even when the keys would not
-    be applied; application is suppressed by ignore_pair_keys. Sections must
-    name a SAS table: a section for a SAS table without a Parquet counterpart
-    is ignored, because that dataset already fails as missing_counterpart and
-    is never compared.
+    Validate even when ignore_pair_keys disables pairing, so typos remain visible.
+    Sections must name a SAS table. Ignore sections without a Parquet counterpart:
+    those datasets already fail as missing_counterpart and never reach comparison.
     """
     if config.schema is None:
         return {}
@@ -117,9 +115,7 @@ def _execute(config: RunConfig) -> int:
     any_fail = bool(pairing.sas_only or pairing.python_only)
     any_warn = False
     try:
-        # Pairing already proved these files have no equivalent on the other
-        # side, so they are never opened: unmatched inputs can be huge, and
-        # staging them would only recover counts the comparison cannot use.
+        # Do not read unmatched files. Their counts cannot contribute to a comparison.
         for side, entries in (("sas", pairing.sas_only), ("python", pairing.python_only)):
             for entry in entries:
                 ident = uuid.uuid4().hex
@@ -158,10 +154,7 @@ def _execute(config: RunConfig) -> int:
         )
         for sas, python in matched_pairs:
             ident = uuid.uuid4().hex
-            # Per-table schema.toml keys override the global pair_keys default;
-            # both are then filtered to the columns this dataset shares.
-            # ignore_pair_keys (--no-pair-keys) suppresses every declared
-            # source, including the schema file.
+            # --no-pair-keys suppresses schema keys as well as the global default.
             pair_keys = (
                 ()
                 if config.ignore_pair_keys
@@ -400,8 +393,7 @@ def _execute(config: RunConfig) -> int:
             else "no_differences"
         )
         if workbook_status != "generated" and staged_paths:
-            # The workbook will not be written; release staging now instead of
-            # holding the files until run-temp cleanup.
+            # Release unused staging before report publication to reduce disk use.
             for leftover in staged_paths.values():
                 leftover.unlink(missing_ok=True)
             staged_paths.clear()

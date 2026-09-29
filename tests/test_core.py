@@ -283,9 +283,7 @@ def test_vector_keys_match_scalar_golden() -> None:
         series = _series("moment", raw) if column == "Moment" else _series(column.lower(), raw)
         _assert_builder_matches_scalar(series)
         if column == "Amount":
-            # Exact decimal rounding of binary floats has no vectorized form,
-            # so round_digits sends the whole float column through the scalar
-            # path.
+            # Use scalar encoding for floats to preserve exact decimal rounding.
             assert vector_keys(series, round_digits=2) is None
         elif column == "Code":
             # Pure-integer text is round-invariant, so its builder survives.

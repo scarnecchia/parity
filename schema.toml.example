@@ -1,27 +1,18 @@
 # Copy to schema.toml and run: parity run --schema schema.toml.
 # Each section names one table and configures it for this run.
 
-# Section names match the dataset identity: the case-folded filename stem with
-# one leading rNN_ prefix (r01_, r02_, ...) ignored — [r01_attrition] and
-# [attrition] both configure the table behind r01_attrition.sas7bdat or
-# attrition.parquet. Matching is by stem across ALL directories: one section
-# configures that table in dplocal and msoc alike. A section matching no SAS
-# table is a configuration error, so a typo cannot silently do nothing; a
-# section for a SAS table without a Parquet counterpart is ignored — that
-# dataset already fails as missing_counterpart.
+# Section names use case-folded filename stems, without one leading rNN_ prefix.
+# [r01_attrition] and [attrition] both match r01_attrition.sas7bdat or attrition.parquet.
+# One section applies across directories, including both dplocal and msoc.
+# A section without a matching SAS table is a configuration error.
+# Sections without a Parquet counterpart are ignored: those datasets already fail as missing_counterpart.
 #
-# Currently supported per-table key: pair_keys — shared column names used as
-# join keys for that table: both tables are ordered by these columns and each
-# row is compared only with the row whose key values are equal; rows with no
-# key match are listed one-sided. This overrides the global pair_keys
-# (config.toml / --pair-keys) for the table. Columns are case-folded to match
-# staged columns. --no-pair-keys suppresses every declared pairing key for a
-# run.
+# pair_keys is the only supported setting. It overrides config.toml / --pair-keys for this table.
+# Pair excess rows only on equal key values. Rows without a key match stay one-sided.
+# Column names are case-folded. --no-pair-keys disables all declared keys for the run.
 #
-# A section may contain only pair_keys; any other key is a configuration
-# error naming the key. Declaring a column that exists on only one side is
-# fine: it cannot join the rows (reported as unused_pair_keys in the
-# summary), and the dataset fails through its normal conditions.
+# Other settings cause a configuration error. Keys present on only one side cannot join rows.
+# The summary lists them as unused_pair_keys. Normal dataset conditions still apply.
 
 [r01_attrition]
 pair_keys = ["group", "level"]

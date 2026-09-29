@@ -171,9 +171,6 @@ def test_missing_whitespace_set_matches_python_rstrip() -> None:
 
 
 def test_declared_keys_realign_excess_pairing_by_key_value(tmp_path: Path) -> None:
-    # Declaring z pairs excess rows on equal z; without declared keys the
-    # value-order pairing pairs on equal a. Each pairing reports only the
-    # column the pairs disagree on.
     left = {"a": [1, 2], "z": [2000, 1990]}
     right = {"a": [1, 2], "z": [1990, 2000]}
     automatic = _compare(tmp_path / "auto", left, right)
@@ -232,9 +229,6 @@ def test_pair_keys_casefolded_to_staged_names(tmp_path: Path) -> None:
 
 
 def test_declared_keys_pair_rows_across_different_staging_orders(tmp_path: Path) -> None:
-    # Rows enter staging in different orders; declaring id compares each SAS
-    # row with the Parquet row carrying the same id, so the reported
-    # differences describe corresponding rows.
     left = {"id": [3, 1, 2], "bd": ["c", "a", "b"]}
     right = {"id": [1, 2, 3], "bd": ["X", "Y", "Z"]}
     result = _compare(tmp_path, left, right, pair_keys=("id",))
@@ -284,10 +278,8 @@ def test_declared_keys_pair_duplicates_within_key_groups(tmp_path: Path) -> None
 
 
 def test_severity_is_classified_on_the_declared_key_pairing(tmp_path: Path) -> None:
-    # g is text on one side and numeric on the other (crossed); k1 is numeric
-    # on both sides. Without keys the value-order pairs also differ on k1, so
-    # the dataset FAILs. With k1 declared, rows pair on equal k1 and every
-    # difference falls inside the crossed column, so the dataset WARNs.
+    # Value-order pairs differ on same-typed k1, causing FAIL. Joining on k1 leaves
+    # only character-vs-numeric differences in g, causing WARN.
     left = {"g": ["x", "y"], "k1": [1, 2]}
     right = {"g": [5, 6], "k1": [2, 1]}
     automatic = _compare(tmp_path / "auto", left, right)
@@ -302,8 +294,7 @@ def test_severity_is_classified_on_the_declared_key_pairing(tmp_path: Path) -> N
 
 
 def test_unmatched_declared_keys_never_manufacture_a_pair(tmp_path: Path) -> None:
-    # The excess rows share no key value, so nothing pairs: each side lists
-    # its row one-sided instead of comparing two different group values.
+    # Unequal keys must stay one-sided even when both sides have one excess row.
     result = _compare(
         tmp_path,
         {"level": [1], "group": ["A"]},

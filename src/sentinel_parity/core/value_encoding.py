@@ -1,11 +1,9 @@
 # pattern: Functional Core
 """Value-space equality keys and typed display envelopes.
 
-Cells match when their decoded values are equal; declared storage types are
-never a factor. 16.0 = 16 while 16.2 != 16, True = 1, naive timestamps are
-instants read as UTC, dates equal midnight instants, numeric-looking text
-compares as numbers, and every missing form (null, NaN, blank text) is one
-value.
+Compare decoded values, not declared storage types. Numbers compare by exact
+value, including booleans and numeric text. Treat naive timestamps as UTC and
+dates as midnight instants. Null, NaN, and blank text share one missing value.
 """
 
 from __future__ import annotations
@@ -65,10 +63,8 @@ def rounded_display(
         return value
     normalized = round_to_decimal_places(decimal_value, round_digits).normalize()
     if normalized == normalized.to_integral_value():
-        # Integer display without an exponent: int() is exact for integral
-        # decimals and avoids the 28-digit context limit quantize would hit
-        # for huge integrals (1e308 with round digits). A negative zero
-        # stays itself instead of collapsing to plain zero.
+        # int() avoids exponents and quantize's 28-digit context limit for large integers.
+        # Keep the original zero to preserve its sign.
         return Decimal(int(normalized)) if normalized else normalized
     return normalized
 

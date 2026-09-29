@@ -29,8 +29,7 @@ if TYPE_CHECKING:
 
 BATCH_ROWS = 65536
 
-# Strings needing JSON escapes ride the scalar path; everything else embeds
-# verbatim between quotes.
+# Use scalar encoding when a string needs JSON escapes.
 _JSON_ESCAPABLE = r'["\\\x00-\x1f]'
 _SIGNED_INTS = (pl.Int8, pl.Int16, pl.Int32, pl.Int64)
 

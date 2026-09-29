@@ -73,9 +73,7 @@ def compare(
         sas_only_columns = [name for name in left_columns if name not in right_names]
         python_only_columns = [name for name in right_columns if name not in left_names]
         shared = [name for name in left_columns if name in right_names]
-        # Staged column names are case-folded, so declared keys normalize the
-        # same way; only keys both sides share can drive the join, and the
-        # rest are logged so a typo or schema drift is visible.
+        # Match staged column casing. Log unusable keys to expose typos and schema drift.
         shared_names = set(shared)
         declared_keys = list(dict.fromkeys(str(name).casefold() for name in pair_keys if name))
         effective_pair_keys = [name for name in declared_keys if name in shared_names]
@@ -144,8 +142,6 @@ def compare(
                 crossed=crossed,
             )
             if sas_only or python_only:
-                # Severity describes the pairing that ran: the keyed join when
-                # declared keys survive, ascending value order otherwise.
                 type_explains = sas_only == python_only == pair_count and all_crossed
                 if type_explains:
                     conditions.append(
@@ -287,12 +283,8 @@ def _compare_shared(
         f"l.{quote_identifier('k_' + n)} IS DISTINCT FROM r.{quote_identifier('k_' + n)}"
         for n in shared
     )
-    # Declared pairing keys turn the excess-row pairing into a join: rows pair
-    # only with a row whose declared key values match (null-safe), duplicates
-    # within one key group pair in remaining-column order, and keys without a
-    # counterpart stay one-sided — a pair never compares two different key
-    # values. Without declared keys, excess rows pair by ascending value order
-    # across all shared columns.
+    # Join excess rows on null-safe key equality. Within each key, pair by remaining-column order.
+    # Unmatched keys stay one-sided. Without keys, pair by value order across all shared columns.
     residual = [name for name in shared if name not in pair_keys]
 
     def build_difference_tables() -> None:
@@ -408,8 +400,7 @@ def _compare_shared(
                 )
         connection.execute("CREATE TABLE pair_cells AS " + " UNION ALL ".join(cells))
 
-    # Severity is classified on the pairing that is exported: the keyed join
-    # when declared keys survive filtering, ascending value order otherwise.
+    # Classify severity on these exported pairs, not on a separate value-order pairing.
     build_difference_tables()
     counts: dict[str, int] = {}
     pair_count = 0

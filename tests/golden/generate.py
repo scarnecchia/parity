@@ -1,10 +1,8 @@
 """Regenerate golden parity captures under .tmp/golden (never committed).
 
-Run only with the implementation whose behavior should become the parity
-definition; the output files are a local development reference for diffing
-refactors (generated test data stays out of the repository).  The committed,
-permanent gate is the builder-vs-scalar property tests plus the
-independent-reference detail tests.
+Run with the implementation that defines expected behavior. Use the output
+for local refactor comparisons. Do not commit generated data. The committed
+checks compare builders against scalar encoding and details against an independent reference.
 
     .venv/bin/python tests/golden/generate.py
 

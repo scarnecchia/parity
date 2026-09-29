@@ -149,9 +149,7 @@ def test_sas_only_pair_key_fails_the_dataset_without_error(tmp_path: Path) -> No
     schema = _write_schema(tmp_path / "schema.toml", '[third]\npair_keys = ["ACTUAL"]\n')
     out = tmp_path / "out"
 
-    # ACTUAL exists only in SAS: the run must complete and the dataset must
-    # FAIL through the normal sas_only_columns condition — declaring it as a
-    # pairing key is never a configuration error.
+    # A SAS-only key is a dataset condition, not a configuration error.
     assert run(RunConfig(sas, python, out, schema=schema)) == 1
 
     entry = next(
