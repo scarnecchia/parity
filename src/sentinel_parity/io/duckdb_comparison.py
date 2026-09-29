@@ -453,17 +453,21 @@ def _bounded_preview(
         s_ord,
         p_ord,
     ) in rows:
+        sas_text, sas_marker = _preview_value(
+            sas_type, sas_canonical, sas_value, s_ord is not None, sas_missing
+        )
+        python_text, python_marker = _preview_value(
+            python_type, python_canonical, python_value, p_ord is not None, python_missing
+        )
         result.append(
             {
                 "pair_id": pair,
                 "kind": kind,
                 "column": column,
-                "sas": _preview_value(
-                    sas_type, sas_canonical, sas_value, s_ord is not None, sas_missing
-                ),
-                "python": _preview_value(
-                    python_type, python_canonical, python_value, p_ord is not None, python_missing
-                ),
+                "sas": sas_text,
+                "sas_marker": sas_marker,
+                "python": python_text,
+                "python_marker": python_marker,
                 "sas_type": sas_type,
                 "python_type": python_type,
                 "sas_row": s_ord,
@@ -490,17 +494,18 @@ def _preview_value(
     value: str | None,
     present: bool,
     missing: bool,
-) -> str:
+) -> tuple[str, bool]:
+    """Return the display text plus whether it is an annotation, not a value."""
     if not present:
-        return "(no row)"
+        return "(no row)", True
     if kind is None:
-        return "(missing)"
+        return "(missing)", True
     if value is None:
-        return "(missing)"
+        return "(missing)", True
     if canonical == "null" or missing:
         # SQL checks the full envelope before clipping, preserving its missing status.
-        return f"{value} (compares as missing)"
-    return value
+        return f"{value} (compares as missing)", True
+    return value, False
 
 
 def _one_sided_no_shared(

@@ -15,6 +15,10 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from sentinel_parity.config import DETAIL_DIR_NAME
 from sentinel_parity.io.workbook_writer import WORKBOOK_COLUMNS
 
+# Column emphasis classes for the preview table, positional over
+# WORKBOOK_COLUMNS: right-aligned identifiers, wrapping text columns.
+_PREVIEW_COLUMN_CLASSES = ("number", "wrap", "wrap", "wrap", "", "", "number", "number", "wrap")
+
 TEMPLATE = Path(__file__).parents[1] / "resources"
 
 
@@ -92,6 +96,7 @@ def publish(
             links=links,
             preview_truncation=preview_truncation,
             workbook_columns=WORKBOOK_COLUMNS,
+            preview_columns=list(zip(WORKBOOK_COLUMNS, _PREVIEW_COLUMN_CLASSES, strict=True)),
         )
         _atomic_text(summary_path, json.dumps(summary, ensure_ascii=False, indent=2) + "\n")
         _atomic_text(index_path, html)
