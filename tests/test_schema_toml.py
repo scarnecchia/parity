@@ -114,8 +114,7 @@ def test_schema_toml_ignores_sas_only_table_section(tmp_path: Path) -> None:
     assert run(RunConfig(sas, python, out, schema=schema)) == 1
 
     datasets = {
-        item["name"]: item
-        for item in json.loads((out / "summary.json").read_text())["datasets"]
+        item["name"]: item for item in json.loads((out / "summary.json").read_text())["datasets"]
     }
     assert datasets["dplocal/r09_extra.sas7bdat"]["reason"] == "missing_counterpart"
     assert datasets["dplocal/r01_people.sas7bdat"]["pair_keys"] == ["actual"]

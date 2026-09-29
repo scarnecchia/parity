@@ -46,9 +46,7 @@ def _table_pair_keys(config: RunConfig, pairing: Pairing) -> dict[str, tuple[str
     sas_stems |= {normalize_identity_stem(entry.stem) for entry in pairing.sas_only}
     unknown = sorted(set(tables) - sas_stems)
     if unknown:
-        raise ValueError(
-            "schema.toml has sections matching no SAS table: " + ", ".join(unknown)
-        )
+        raise ValueError("schema.toml has sections matching no SAS table: " + ", ".join(unknown))
     run_log.event("schema_loaded", tables=len(tables))
     return tables
 
