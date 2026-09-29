@@ -267,6 +267,22 @@ def test_declared_keys_join_null_values(tmp_path: Path) -> None:
     assert one_sided[0]["sas_row"] == 1
 
 
+def test_declared_keys_pair_duplicates_within_key_groups(tmp_path: Path) -> None:
+    # Duplicate key groups pair in remaining-column order, one exact row
+    # cancels out of the excess set, and the extra duplicate stays one-sided.
+    left = {"k": [1, 1, 2, 2], "v": ["a", "b", "c", "d"]}
+    right = {"k": [2, 2, 1], "v": ["c", "x", "a"]}
+    result = _compare(tmp_path, left, right, pair_keys=("k",))
+    records = [json.loads(line) for line in Path(result["details_path"]).read_text().splitlines()]
+    paired = [record for record in records if record["kind"] == "paired_mismatch"]
+    one_sided = [record for record in records if record["kind"] == "only_sas"]
+    assert len(paired) == 1 and len(one_sided) == 1
+    assert paired[0]["sas_row"] == 3 and paired[0]["python_row"] == 1
+    assert [item["column"] for item in paired[0]["differences"]] == ["v"]
+    assert one_sided[0]["sas_row"] == 1
+    assert (result["matched"], result["sas_only"], result["python_only"]) == (2, 2, 1)
+
+
 def test_severity_is_classified_on_the_declared_key_pairing(tmp_path: Path) -> None:
     # g is text on one side and numeric on the other (crossed); k1 is numeric
     # on both sides. Without keys the value-order pairs also differ on k1, so

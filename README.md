@@ -232,8 +232,8 @@ A compared dataset carries `conditions`: every problem found, not just the first
 | `missing_counterpart` | FAIL | The file has no equivalent on the other side; the file is never read. |
 | `sas_only_columns` | FAIL | Parquet lacks columns present in SAS. Shared-column values can still match. |
 | `python_only_columns` | WARN | Parquet has extra columns SAS lacks; their values are not compared. |
-| `value_mismatch` | FAIL | Unmatched counts differ, or paired rows differ outside character-vs-numeric columns. |
-| `type_mismatch` | WARN | Unmatched counts are equal, and every shared-value difference is inside character-vs-numeric columns. Severity is classified on the effective pairing: the declared-key join when `pair_keys` are set, ascending value order otherwise. Other conditions can still make the dataset fail. |
+| `value_mismatch` | FAIL | Unmatched counts differ, some excess rows cannot pair by the declared keys, or paired rows differ outside character-vs-numeric columns. |
+| `type_mismatch` | WARN | Unmatched counts are equal, every excess row is part of a pair, and every shared-value difference is inside character-vs-numeric columns. Severity is classified on the effective pairing: the declared-key join when `pair_keys` are set, ascending value order otherwise. Other conditions can still make the dataset fail. |
 
 A dataset FAILs when any condition fails, WARNs when only warnings remain (which does not fail the run), and PASSes with none. `reason` repeats the most severe condition's code (`null` when clean).
 
