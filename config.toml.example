@@ -29,9 +29,22 @@ memory_limit = "1GB"
 # Optional string: DuckDB maximum temporary-directory size. Default: "10GB".
 max_temp_size = "10GB"
 
-# Optional nonnegative integer: mismatch rows shown per side per dataset in HTML.
-# Default: 100. Set to 0 to omit preview rows; complete JSONL details are unaffected.
+# Optional nonnegative integer: flat difference rows shown per dataset in HTML.
+# Default: 100. Set to 0 to omit table rows. Complete JSONL v2 details remain available.
 preview_rows = 100
+
+# Optional positive integer preview limits. Defaults: 1 MiB per dataset, 10 MiB per run, 512 characters per cell.
+preview_max_bytes = 1048576
+preview_total_max_bytes = 10485760
+preview_cell_chars = 512
+
+# Optional automatic Excel workbook. A limit breach omits the complete workbook.
+# Defaults: enabled, 100 sheets, 100000 difference rows total, 25000 per dataset, 100 MiB projected uncompressed cell text.
+excel = true
+excel_max_sheets = 100
+excel_max_rows = 100000
+excel_max_rows_per_sheet = 25000
+excel_max_bytes = 104857600
 
 # Optional positive integer: DuckDB worker threads for comparison.
 # Default: 4.

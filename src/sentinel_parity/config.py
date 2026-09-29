@@ -27,10 +27,38 @@ class RunConfig:
     round_digits: int | None = None
     id: str | None = None
     threads: int = DEFAULT_THREADS
+    preview_max_bytes: int = 1_048_576
+    preview_total_max_bytes: int = 10_485_760
+    preview_cell_chars: int = 512
+    excel: bool = True
+    excel_max_sheets: int = 100
+    excel_max_rows: int = 100_000
+    excel_max_rows_per_sheet: int = 25_000
+    excel_max_bytes: int = 104_857_600
 
     def __post_init__(self) -> None:
-        if self.preview_rows < 0 or self.batch_size <= 0:
-            raise ValueError("preview_rows must be nonnegative and batch_size must be positive")
+        positive_limits = (
+            self.preview_max_bytes,
+            self.preview_total_max_bytes,
+            self.preview_cell_chars,
+            self.excel_max_sheets,
+            self.excel_max_rows,
+            self.excel_max_rows_per_sheet,
+            self.excel_max_bytes,
+        )
+        if (
+            self.preview_rows < 0
+            or self.batch_size <= 0
+            or any(
+                not isinstance(value, int) or isinstance(value, bool) or value <= 0
+                for value in positive_limits
+            )
+        ):
+            raise ValueError(
+                "preview rows must be nonnegative and export limits must be positive integers"
+            )
+        if not isinstance(self.excel, bool):
+            raise ValueError("excel must be a boolean")
         if self.round_digits is not None and (
             isinstance(self.round_digits, bool) or self.round_digits < 1
         ):

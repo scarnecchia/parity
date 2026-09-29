@@ -199,27 +199,27 @@ def test_timestamp_ns_keys_and_adjacent_ns_mismatch_are_exact(
         .read_text()
         .splitlines()
     ]
-    assert len(details) == 8
-    assert {(row["side"], row["status"], row["reason"]) for row in details} == {
-        ("sas", "FAIL", "only_sas"),
-        ("python", "FAIL", "only_python"),
-    }
-    from datetime import UTC, datetime
-
-    def exact_iso_ns(epoch_ns: int) -> str:
-        seconds, fraction = divmod(epoch_ns, 1_000_000_000)
-        base = datetime.fromtimestamp(seconds, tz=UTC).strftime("%Y-%m-%dT%H:%M:%S")
-        return f"{base}.{fraction:09d}"
-
-    expected_python_values = sorted(
-        exact_iso_ns(value)
-        for value in mismatched_values.cast(pa.int64()).to_pylist()
-        if value is not None
+    assert len(details) == 4
+    assert all(record["schema_version"] == 2 for record in details)
+    assert all(record["kind"] == "paired_mismatch" for record in details)
+    assert all(
+        record["sas_row"] is not None and record["python_row"] is not None for record in details
     )
     python_values = sorted(
-        row["values"]["datetime"]["value"] for row in details if row["side"] == "python"
+        item["python"]["value"]
+        for record in details
+        for item in record["differences"]
+        if item["column"] == "datetime"
     )
-    assert python_values == expected_python_values
+    from datetime import UTC, datetime
+
+    expected_python_values = []
+    for epoch_ns in mismatched_values.cast(pa.int64()).to_pylist():
+        if epoch_ns is not None:
+            seconds, fraction = divmod(epoch_ns, 1_000_000_000)
+            base = datetime.fromtimestamp(seconds, tz=UTC).strftime("%Y-%m-%dT%H:%M:%S")
+            expected_python_values.append(f"{base}.{fraction:09d}")
+    assert python_values == sorted(expected_python_values)
     assert all(len(value.rsplit(".", 1)[1]) == 9 for value in python_values)
 
 
@@ -248,9 +248,8 @@ def test_timezone_named_zone_compares_equivalent_utc_instants(tmp_path: Path) ->
     result = compare(left, right, work, "128MB", "2GB", "timezone-test")
     assert result["status"] == "PASS"
     records = [json.loads(line) for line in Path(result["details_path"]).read_text().splitlines()]
-    assert len(records) == 4
-    assert all(record["status"] == "PASS" for record in records)
-    assert all(record["dataset_id"] == "timezone-test" for record in records)
+    assert records == []
+    assert result["difference_row_count"] == 0
 
 
 def test_naive_and_aware_timestamps_match_on_values(fixtures: Path, tmp_path: Path) -> None:
@@ -286,8 +285,8 @@ def test_naive_and_aware_timestamps_match_on_values(fixtures: Path, tmp_path: Pa
         .read_text()
         .splitlines()
     ]
-    assert len(details) == 8
-    assert all(row["status"] == "PASS" for row in details)
+    assert details == []
+    assert dataset["difference_row_count"] == 0
 
 
 def test_config_cli_equivalence(tmp_path: Path) -> None:
@@ -482,7 +481,7 @@ def test_run_log_jsonl_verbose_and_short_options(tmp_path: Path) -> None:
         "run_done",
     } <= names
     phases = {record["phase"] for record in events if record["event"] == "compare_phase"}
-    assert phases == {"load_tables", "rank", "multiset", "pairs", "details"}
+    assert phases == {"load_tables"}
     start = next(record for record in events if record["event"] == "run_start")
     assert start["threads"] == 5
     allowed_keys = {
@@ -862,8 +861,9 @@ def test_uppercase_sas_extension_reads_real_fixture_pair(tmp_path: Path) -> None
         .read_text()
         .splitlines()
     ]
-    assert len(details) == 2880
-    assert all(record["dataset_id"] == dataset["id"] for record in details)
+    assert details == []
+    assert dataset["difference_row_count"] == 0
+    assert dataset["matched_pairs"] == 1440
 
 
 def test_multiset_comparison_oracle(tmp_path: Path) -> None:
@@ -916,18 +916,25 @@ def test_multiple_matched_pairs_have_isolated_details(tmp_path: Path) -> None:
     for dataset in summary["datasets"]:
         path = tmp_path / "out" / links[dataset["id"]]
         records = [json.loads(line) for line in path.read_text().splitlines()]
-        assert all(record["dataset_id"] == dataset["id"] for record in records)
-        assert len(records) == dataset["sas_rows"] + dataset["python_rows"]
         if dataset["name"] == "dplocal/first.sas7bdat":
-            assert all(record["status"] == "PASS" for record in records)
+            assert records == []
+            assert dataset["difference_row_count"] == 0
         else:
-            python_rows = [record for record in records if record["side"] == "python"]
-            assert len(python_rows) == 7
-            assert all(row["values"]["country"]["value"] == "pair-two-only" for row in python_rows)
-            sas_failures = [
-                row for row in records if row["side"] == "sas" and row["status"] == "FAIL"
-            ]
-            assert len(sas_failures) == 1440
+            assert all(record["schema_version"] == 2 for record in records)
+            assert all(record["dataset_id"] == dataset["id"] for record in records)
+            paired = [record for record in records if record["kind"] == "paired_mismatch"]
+            only_sas = [record for record in records if record["kind"] == "only_sas"]
+            assert len(paired) == 7 and len(only_sas) == 1433
+            assert len(records) == max(dataset["sas_only"], dataset["python_only"])
+            assert dataset["difference_row_count"] == 14_385
+            assert all(
+                "country" in {item["column"] for item in record["differences"]} for record in paired
+            )
+            assert all(
+                {item["column"] for item in record["differences"]}
+                == {name.casefold() for name in dataset["metadata"]["sas"]["columns"]}
+                for record in only_sas
+            )
 
 
 def test_duplicate_conservation(tmp_path: Path) -> None:
@@ -947,23 +954,18 @@ def test_duplicate_conservation(tmp_path: Path) -> None:
         .read_text()
         .splitlines()
     ]
-    assert len(details) == 2879
-    assert all(record["dataset_id"] == dataset["id"] for record in details)
-    sas_rows = {
-        record["staging_row_number"]: record for record in details if record["side"] == "sas"
-    }
-    python_rows = {
-        record["staging_row_number"]: record for record in details if record["side"] == "python"
-    }
-    assert set(sas_rows) == set(range(frame.height))
-    assert set(python_rows) == set(range(frame.height - 1))
-    failed_sas = [record for record in sas_rows.values() if record["status"] == "FAIL"]
-    assert len(failed_sas) == 1
-    excess_ordinal = frame.height - 1
-    assert failed_sas[0]["staging_row_number"] == excess_ordinal
-    expected_country = frame["COUNTRY"][excess_ordinal]
-    assert failed_sas[0]["values"]["country"] == {"type": "string", "value": expected_country}
-    assert all(record["status"] == "PASS" for record in python_rows.values())
+    assert len(details) == 1
+    assert details[0]["schema_version"] == 2
+    assert details[0]["dataset_id"] == dataset["id"]
+    assert details[0]["kind"] == "only_sas"
+    assert details[0]["sas_row"] == frame.height - 1
+    assert details[0]["python_row"] is None
+    assert details[0]["pair_id"] is not None
+    expected_country = frame["COUNTRY"][frame.height - 1]
+    country = next(item for item in details[0]["differences"] if item["column"] == "country")
+    assert country["sas"] == {"type": "string", "value": expected_country}
+    assert country["python"] is None
+    assert dataset["difference_row_count"] == len(details[0]["differences"])
 
 
 def test_row_details_complete(tmp_path: Path) -> None:
@@ -984,20 +986,9 @@ def test_row_details_complete(tmp_path: Path) -> None:
         .read_text()
         .splitlines()
     ]
-    assert len(records) == 2880
-    assert all(record["schema_version"] == 1 for record in records)
-    assert all(record["dataset_id"] == dataset["id"] for record in records)
-    expected = polars_readstat.ScanReadstat(str(sas / "dplocal" / "sample.sas7bdat")).df.collect()
-    by_occurrence = {(record["side"], record["staging_row_number"]): record for record in records}
-    assert len(by_occurrence) == 2880
-    for side in ("sas", "python"):
-        for ordinal in range(expected.height):
-            record = by_occurrence[(side, ordinal)]
-            assert record["status"] == "PASS"
-            assert record["values"]["country"] == {
-                "type": "string",
-                "value": expected["COUNTRY"][ordinal],
-            }
+    assert records == []
+    assert dataset["difference_row_count"] == 0
+    assert dataset["matched_pairs"] == 1440
 
 
 def test_all_rows_fail_for_schema_or_missing_file(tmp_path: Path) -> None:
@@ -1036,19 +1027,19 @@ def test_all_rows_fail_for_schema_or_missing_file(tmp_path: Path) -> None:
     assert dataset["sas_rows"] == source.height and dataset["python_rows"] == 2
     assert dataset["detail_complete"] is True
     assert len(records) == source.height + 2
-    expected_names = {name.casefold() for name in source.columns} | {"different"}
-    assert {record["side"] for record in records} == {"sas", "python"}
-    assert all(record["status"] == "FAIL" for record in records)
-    assert {record["reason"] for record in records} == {"only_sas", "only_python"}
+    assert dataset["difference_row_count"] == sum(len(record["differences"]) for record in records)
+    assert {record["kind"] for record in records} == {"only_sas", "only_python"}
+    assert all(record["schema_version"] == 2 for record in records)
     assert all(record["dataset_id"] == dataset["id"] for record in records)
-    sas_records = [record for record in records if record["side"] == "sas"]
-    python_records = [record for record in records if record["side"] == "python"]
+    assert all(record["pair_id"] is None for record in records)
+    sas_records = [record for record in records if record["kind"] == "only_sas"]
+    python_records = [record for record in records if record["kind"] == "only_python"]
     assert len(sas_records) == source.height and len(python_records) == 2
-    assert all(set(record["values"]) == expected_names for record in records)
-    assert all(record["values"]["different"] == {"type": "absent_column"} for record in sas_records)
-    assert python_records[0]["values"]["different"] is None
-    assert python_records[1]["values"]["different"] == {"type": "string", "value": "x"}
-    assert all(record["values"]["actual"] == {"type": "absent_column"} for record in python_records)
+    assert all(record["python_row"] is None for record in sas_records)
+    assert all(record["sas_row"] is None for record in python_records)
+    assert all(cell["python"] is None for record in sas_records for cell in record["differences"])
+    assert all(cell["sas"] is None for record in python_records for cell in record["differences"])
+    assert all("absent_column" not in json.dumps(record) for record in records)
 
     sas2, python2 = _roots(tmp_path / "missing")
     shutil.copyfile(fixture, sas2 / "dplocal" / "only.sas7bdat")
@@ -1058,7 +1049,8 @@ def test_all_rows_fail_for_schema_or_missing_file(tmp_path: Path) -> None:
     ).df.collect().write_parquet(python2 / "msoc" / "matched.parquet")
     assert run(RunConfig(sas2, python2, tmp_path / "missing-out")) == 1
     missing_summary = json.loads((tmp_path / "missing-out" / "summary.json").read_text())
-    assert missing_summary["schema_version"] == 2
+    assert missing_summary["schema_version"] == 3
+    assert missing_summary["details_schema_version"] == 2
     dataset = next(
         item for item in missing_summary["datasets"] if item["reason"] == "missing_counterpart"
     )
@@ -1107,9 +1099,10 @@ def test_all_rows_fail_for_schema_or_missing_file(tmp_path: Path) -> None:
     )
     detail_path = tmp_path / "family-out" / summary3["detail_links"][dataset["id"]]
     records = [json.loads(line) for line in detail_path.read_text().splitlines()]
-    assert len(records) == 2880
-    assert all(record["status"] == "FAIL" for record in records)
-    assert {record["reason"] for record in records} == {"only_sas", "only_python"}
+    assert len(records) == 1440
+    assert all(record["schema_version"] == 2 for record in records)
+    assert all(record["kind"] == "paired_mismatch" for record in records)
+    assert dataset["difference_row_count"] == sum(len(record["differences"]) for record in records)
 
 
 def test_all_null_nested_column_is_dataset_error(tmp_path: Path) -> None:
@@ -1181,20 +1174,27 @@ def test_detail_values_use_typed_envelopes(tmp_path: Path) -> None:
     detail_path = tmp_path / "out" / summary["detail_links"][dataset["id"]]
     records = [json.loads(line) for line in detail_path.read_text().splitlines()]
     assert {record["dataset_id"] for record in records} == {dataset["id"]}
-    by_ordinal = {
-        record["staging_row_number"]: record["values"]
-        for record in records
-        if record["side"] == "python"
-    }
+    assert all(record["schema_version"] == 2 for record in records)
+    python_rows = [record for record in records if record["python_row"] is not None]
+    assert len(python_rows) == 2
+
+    def cells_for(record: dict[str, object]) -> dict[str, object | None]:
+        differences = record["differences"]
+        assert isinstance(differences, list)
+        return {str(item["column"]): item["python"] for item in differences}
+
+    by_ordinal = {record["python_row"]: cells_for(record) for record in python_rows}
     assert by_ordinal[0]["year"] == {"type": "float", "value": "nan", "canonical": "null"}
     assert by_ordinal[0]["quarter"] == {"type": "binary", "value": "AP8="}
     assert by_ordinal[1]["quarter"] == {"type": "binary", "value": "AQI="}
     assert by_ordinal[0]["month"]["value"] == "2009-02-13T23:31:31.234567890"
     assert by_ordinal[1]["month"]["value"] == "2009-02-13T23:31:31.234567891"
-    assert "NaN" not in detail_path.read_text()
+    assert '"value":"NaN"' not in detail_path.read_text()
 
 
 def test_jsonl_typed_values(tmp_path: Path) -> None:
+    import pyarrow.parquet as pq
+
     sas, python = _roots(tmp_path)
     shutil.copyfile(
         Path(__file__).resolve().parents[1] / ".parity-fixtures" / "productsales.sas7bdat",
@@ -1204,9 +1204,16 @@ def test_jsonl_typed_values(tmp_path: Path) -> None:
         python / "dplocal" / "data.parquet"
     )
     run(RunConfig(sas, python, tmp_path / "out"))
-    lines = next((tmp_path / "out" / "details").glob("*.jsonl")).read_text().splitlines()
-    rows = (json.loads(line) for line in lines[:200])
-    assert any(row["values"]["year"]["canonical"] == "n:1993/1" for row in rows)
+    summary = json.loads((tmp_path / "out" / "summary.json").read_text())
+    dataset = summary["datasets"][0]
+    detail_path = tmp_path / "out" / summary["detail_links"][dataset["id"]]
+    assert detail_path.read_text() == ""
+    staging_dir = tmp_path / "staged"
+    staging_dir.mkdir()
+    staged = stage(Path(python / "dplocal" / "data.parquet"), "python", staging_dir)
+    table = pq.read_table(staged["path"], columns=["v_year"])
+    payloads = table.column("v_year").to_pylist()
+    assert any(json.loads(value)["canonical"] == "n:1993/1" for value in payloads if value)
 
 
 def test_html_report_contract(tmp_path: Path) -> None:
@@ -1237,9 +1244,13 @@ def test_preview_zero_still_shows_mismatch_counts(tmp_path: Path) -> None:
     assert run(RunConfig(sas, python, tmp_path / "out", preview_rows=0)) == 1
     summary = json.loads((tmp_path / "out" / "summary.json").read_text())
     dataset = next(item for item in summary["datasets"] if item["reason"] == "value_mismatch")
-    assert summary["preview_truncation"][dataset["id"]] == {"sas": 2, "python": 2}
+    truncation = summary["preview_truncation"][dataset["id"]]
+    assert truncation["shown_rows"] == 0
+    assert truncation["omitted_rows"] == dataset["difference_row_count"] == 2
+    assert truncation["rendered_bytes"] == 0
+    assert truncation["reasons"] == ["row_limit"]
     html = (tmp_path / "out" / "index.html").read_text()
-    assert "omitted 2 SAS and 2 Parquet mismatches" in html
+    assert "2 difference rows omitted" in html
     assert "<table" not in html
 
 
@@ -1299,7 +1310,7 @@ def test_html_escaping(tmp_path: Path) -> None:
     python_frame.write_parquet(python / "dplocal" / "fake.parquet")
     assert run(RunConfig(sas, python, tmp_path / "out")) == 1
     html = (tmp_path / "out" / "index.html").read_text()
-    assert r"\u003cimg src=x\u003e" in html
+    assert "&lt;img src=x&gt;" in html
     assert "<img src=x>" not in html
 
 
@@ -1361,9 +1372,6 @@ def test_detail_records_match_staged_values(tmp_path: Path) -> None:
     result = compare(left, right, tmp_path / "cmp", "1GB", "10GB", "refadv")
 
     shared = [name for name in left["columns"] if name in right["columns"]]
-    union = list(left["columns"]) + [
-        name for name in right["columns"] if name not in left["columns"]
-    ]
 
     def key_of(side: str, ordinal: int) -> tuple[str | None, ...]:
         row = staged[side][ordinal]
@@ -1407,36 +1415,52 @@ def test_detail_records_match_staged_values(tmp_path: Path) -> None:
         )
 
     records = [json.loads(line) for line in Path(result["details_path"]).read_text().splitlines()]
-    records.sort(key=lambda record: (record["side"], record["staging_row_number"]))
-    assert len(records) == len(staged["sas"]) + len(staged["python"])
     assert (result["matched"], result["sas_only"], result["python_only"]) == (
         len(staged["sas"]) - len(excess_ordinals["sas"]),
         len(excess_ordinals["sas"]),
         len(excess_ordinals["python"]),
     )
+    expected_pair_count = min(len(excess_ordinals["sas"]), len(excess_ordinals["python"]))
+    assert result["differing_pair_count"] == expected_pair_count
+    expected_kinds = {
+        "paired_mismatch": expected_pair_count,
+        "only_sas": max(0, len(excess_ordinals["sas"]) - expected_pair_count),
+        "only_python": max(0, len(excess_ordinals["python"]) - expected_pair_count),
+    }
+    assert Counter(record["kind"] for record in records) == Counter(
+        {kind: count for kind, count in expected_kinds.items() if count}
+    )
+    assert all(record["schema_version"] == 2 for record in records)
     for record in records:
-        side = record["side"]
-        ordinal = record["staging_row_number"]
-        row = staged[side][ordinal]
-        side_columns = left["columns"] if side == "sas" else right["columns"]
-        for name in union:
-            if name not in side_columns:
-                expected_cell: object = {"type": "absent_column"}
-            else:
-                envelope = row[f"v_{name}"]
-                expected_cell = json.loads(envelope) if envelope is not None else None
-            assert record["values"][name] == expected_cell, (side, ordinal, name)
-        if ordinal in excess_ordinals[side]:
-            diffs, pair_id = annotation[(side, ordinal)]
-            assert record["status"] == "FAIL"
-            assert record["reason"] == f"only_{side}"
-            assert record["differing_columns"] == diffs, (side, ordinal)
-            assert record["pair_id"] == pair_id, (side, ordinal)
+        kind = record["kind"]
+        sas_ordinal = record["sas_row"]
+        python_ordinal = record["python_row"]
+        if kind == "paired_mismatch":
+            assert sas_ordinal in excess_ordinals["sas"]
+            assert python_ordinal in excess_ordinals["python"]
+            expected_columns = [
+                name
+                for name in shared
+                if staged["sas"][sas_ordinal][f"k_{name}"]
+                != staged["python"][python_ordinal][f"k_{name}"]
+            ]
+            assert [cell["column"] for cell in record["differences"]] == expected_columns
         else:
-            assert record["status"] == "PASS"
-            assert record["reason"] is None
-            assert "differing_columns" not in record
-            assert "pair_id" not in record
+            side = "sas" if kind == "only_sas" else "python"
+            ordinal = sas_ordinal if side == "sas" else python_ordinal
+            assert ordinal in excess_ordinals[side]
+            assert (python_ordinal is None) if side == "sas" else (sas_ordinal is None)
+            expected_columns = left["columns"] if side == "sas" else right["columns"]
+        assert [cell["column"] for cell in record["differences"]] == expected_columns
+        for cell in record["differences"]:
+            name = cell["column"]
+            for side, ordinal in (("sas", sas_ordinal), ("python", python_ordinal)):
+                actual = cell[side]
+                if ordinal is None:
+                    assert actual is None
+                else:
+                    envelope = staged[side][ordinal][f"v_{name}"]
+                    assert actual == (json.loads(envelope) if envelope is not None else None)
 
 
 def test_identical_sides_pass_with_plain_records(tmp_path: Path) -> None:
@@ -1452,10 +1476,8 @@ def test_identical_sides_pass_with_plain_records(tmp_path: Path) -> None:
     assert result["status"] == "PASS"
     assert result["matched"] == adversarial.ROW_COUNT
     records = [json.loads(line) for line in Path(result["details_path"]).read_text().splitlines()]
-    assert len(records) == 2 * adversarial.ROW_COUNT
-    assert all(record["status"] == "PASS" for record in records)
-    assert all("differing_columns" not in record for record in records)
-    assert all("pair_id" not in record for record in records)
+    assert records == []
+    assert result["difference_row_count"] == 0
 
 
 def test_staging_is_batch_size_independent(tmp_path: Path) -> None:
@@ -1487,9 +1509,13 @@ def test_summary_detail_reconciliation(tmp_path: Path) -> None:
     run(RunConfig(sas, python, tmp_path / "out"))
     summary = json.loads((tmp_path / "out" / "summary.json").read_text())
     dataset = summary["datasets"][0]
-    assert dataset["matched_pairs"] * 2 == len(
+    detail_lines = (
         Path(tmp_path / "out" / summary["detail_links"][dataset["id"]]).read_text().splitlines()
     )
+    assert detail_lines == []
+    assert dataset["matched_pairs"] == 1440
+    assert dataset["difference_row_count"] == 0
+    assert dataset["details_bytes"] == 0
     assert summary["run_at"].endswith("+00:00") or summary["run_at"].endswith("Z")
     assert summary["inputs"]["sas_root"] == str(sas.resolve())
     assert summary["inputs"]["python_root"] == str(python.resolve())
@@ -1750,7 +1776,8 @@ def test_disk_backed_comparison_smoke(tmp_path: Path) -> None:
     assert left["describe"] and right["describe"]
     assert result["matched"] == rows
     assert result["sas_only"] == result["python_only"] == 0
-    assert len(Path(result["details_path"]).read_text().splitlines()) == 2 * rows
+    assert Path(result["details_path"]).read_text().splitlines() == []
+    assert result["difference_row_count"] == 0
     spills = list(work.glob("spill-*"))
     assert len(spills) == 1 and spills[0].is_dir()
     assert sum(path.stat().st_size for path in work.rglob("*") if path.is_file()) > 0
@@ -2185,12 +2212,9 @@ def test_sas_only_column_fails_but_shared_values_still_compare(tmp_path: Path) -
         .read_text()
         .splitlines()
     ]
-    assert len(details) == 2 * frame.height
-    assert all(row["status"] == "PASS" for row in details)
-    python_rows = [row for row in details if row["side"] == "python"]
-    assert all(row["values"]["country"] == {"type": "absent_column"} for row in python_rows)
-    sas_rows = [row for row in details if row["side"] == "sas"]
-    assert all(row["values"]["country"] != {"type": "absent_column"} for row in sas_rows)
+    assert details == []
+    assert dataset["difference_row_count"] == 0
+    assert dataset["conditions"][0]["reason"] == "sas_only_columns"
     html = (tmp_path / "out" / "index.html").read_text()
     assert "Parquet is missing 1 column that SAS has" in html
     assert "so no row can fully match" in html
@@ -2325,9 +2349,11 @@ def test_unmatched_rows_carry_differing_columns(tmp_path: Path) -> None:
     )
     assert result["status"] == "FAIL"
     records = [json.loads(line) for line in Path(result["details_path"]).read_text().splitlines()]
-    failures = [record for record in records if record["status"] == "FAIL"]
-    assert len(failures) == 2
-    assert all(record["differing_columns"] == ["b"] for record in failures)
-    assert {record["side"] for record in failures} == {"sas", "python"}
-    pair_ids = {record["pair_id"] for record in failures}
-    assert len(pair_ids) == 1 and None not in pair_ids
+    assert len(records) == 1
+    record = records[0]
+    assert record["schema_version"] == 2
+    assert record["kind"] == "paired_mismatch"
+    assert record["sas_row"] is not None and record["python_row"] is not None
+    assert [item["column"] for item in record["differences"]] == ["b"]
+    assert result["difference_row_count"] == 1
+    assert record["pair_id"] is not None

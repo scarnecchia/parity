@@ -15,6 +15,7 @@ dependencies = [
   "pyarrow>=20,<25",
   "duckdb>=1.2,<2",
   "jinja2>=3.1,<4",
+  "XlsxWriter>=3.2,<4",
 ]
 
 [project.optional-dependencies]
@@ -48,7 +49,7 @@ plugins = []
 exclude = ["tests"]
 
 [[tool.mypy.overrides]]
-module = ["polars_readstat.*", "duckdb.*", "pyarrow.*", "typer.*"]
+module = ["polars_readstat.*", "duckdb.*", "pyarrow.*", "typer.*", "xlsxwriter.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

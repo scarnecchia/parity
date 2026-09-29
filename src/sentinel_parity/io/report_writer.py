@@ -13,6 +13,7 @@ from typing import Any
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from sentinel_parity.config import DETAIL_DIR_NAME
+from sentinel_parity.io.workbook_writer import WORKBOOK_COLUMNS
 
 TEMPLATE = Path(__file__).parents[1] / "resources"
 
@@ -22,14 +23,20 @@ def publish(
     summary: dict[str, Any],
     details: dict[str, Path],
     previews: dict[str, list[dict[str, Any]]],
-    preview_truncation: dict[str, dict[str, int]],
+    preview_truncation: dict[str, dict[str, Any]],
+    workbook_source: Path | None = None,
 ) -> None:
     output.mkdir(parents=True, exist_ok=True)
     detail_dir = output / DETAIL_DIR_NAME
     summary_path = output / "summary.json"
     index_path = output / "index.html"
+    workbook_path = output / "differences.xlsx"
     try:
         detail_dir.mkdir(exist_ok=True)
+        if workbook_source is not None:
+            _atomic_copy(workbook_source, workbook_path)
+        else:
+            workbook_path.unlink(missing_ok=True)
         links: dict[str, str] = {}
         for artifact_id, source in details.items():
             target = detail_dir / f"{artifact_id}.jsonl"
@@ -37,17 +44,59 @@ def publish(
             links[artifact_id] = f"{DETAIL_DIR_NAME}/{artifact_id}.jsonl"
         summary["detail_links"] = links
         env = Environment(loader=FileSystemLoader(TEMPLATE), autoescape=select_autoescape(["html"]))
+        row_template = env.get_template("preview_row.html")
+        datasets = summary.get("datasets", [])
+        limits = summary.get("limits", {})
+        remaining_bytes = int(limits.get("preview_total_max_bytes", 10_485_760))
+        dataset_limit = int(limits.get("preview_max_bytes", 1_048_576))
+        row_limit = int(limits.get("preview_rows", 100))
+        for dataset in datasets:
+            dataset_id = dataset["id"]
+            if "difference_row_count" not in dataset:
+                continue
+            rows = previews.get(dataset_id, [])
+            original_count = int(dataset["difference_row_count"])
+            accepted: list[dict[str, Any]] = []
+            rendered_bytes = 0
+            reasons: list[str] = []
+            if original_count > len(rows):
+                reasons.append("row_limit")
+            for row in rows[:row_limit]:
+                # The reported byte count excludes indentation added by the template include.
+                fragment = row_template.render(row=row)
+                size = len(fragment.encode("utf-8"))
+                if rendered_bytes + size > dataset_limit or size > remaining_bytes:
+                    if rendered_bytes + size > dataset_limit:
+                        reasons.append("dataset_byte_limit")
+                    if size > remaining_bytes:
+                        reasons.append("run_byte_limit")
+                    break
+                accepted.append(row)
+                rendered_bytes += size
+                remaining_bytes -= size
+            previews[dataset_id] = accepted
+            omitted = max(0, original_count - len(accepted))
+            preview_truncation[dataset_id] = {
+                "shown_rows": len(accepted),
+                "omitted_rows": omitted,
+                "rendered_bytes": rendered_bytes,
+                "reasons": list(dict.fromkeys(reasons)),
+            }
+            dataset["preview_truncation"] = preview_truncation[dataset_id]
+        summary["preview_truncation"] = preview_truncation
         html = env.get_template("report.html").render(
             summary=summary,
             previews=previews,
             links=links,
             preview_truncation=preview_truncation,
+            workbook_columns=WORKBOOK_COLUMNS,
         )
         _atomic_text(summary_path, json.dumps(summary, ensure_ascii=False, indent=2) + "\n")
         _atomic_text(index_path, html)
     except BaseException:
         summary_path.unlink(missing_ok=True)
         index_path.unlink(missing_ok=True)
+        workbook_path.unlink(missing_ok=True)
         shutil.rmtree(detail_dir, ignore_errors=True)
         raise
 
@@ -69,7 +118,12 @@ def _atomic_copy(source: Path, target: Path) -> None:
     fd, temp_name = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
     os.close(fd)
     try:
-        shutil.copyfile(source, temp_name)
+        with open(source, "rb") as reader, open(temp_name, "wb") as writer:
+            shutil.copyfileobj(reader, writer)
+            # Flush and fsync so the copied artifact survives a crash before
+            # the atomic replace.
+            writer.flush()
+            os.fsync(writer.fileno())
         os.replace(temp_name, target)
     except BaseException:
         Path(temp_name).unlink(missing_ok=True)

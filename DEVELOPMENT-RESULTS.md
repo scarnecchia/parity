@@ -1,6 +1,53 @@
 # Development results
 
-Status: **all requested acceptance evidence except the operator-waived original special-missing fixture is implemented and verified on the tested platform**. Final full gates and targeted acceptance tests pass. No Git initialization, commit, push, or PR was performed.
+Status: **approved plan implementation complete on this tree; no commit or push was performed**. JSONL v2 comparison, summary v3, bounded HTML previews, automatic budgeted Excel from staged Parquet, runner workbook tests, the narrow-viewport browser suite, and the subprocess resource harness with opt-in experiment are implemented and verified. Consolidated review fixes also pass: pytest **179 passed**, Ruff lint/format clean, mypy clean, sdist+wheel build clean, and the narrow-viewport browser test passes.
+
+## Current implementation result (2026-09-28)
+
+Value-ordered excess diagnostics now rank both sides by ascending, null-safe canonical keys across all shared columns. Original staging ordinals and matched-row order-mismatch counts remain unchanged. `test_duplicate_count_excess_remains_one_sided` confirms that three equal occurrences versus two produce two matched rows and one one-sided excess record; an equal-valued paired excess with empty `differences` is not reachable under the existing exact multiset matching/excess definition, so no such record is added.
+
+Final verification run in order on the final tree:
+
+| Command | Result |
+|---|---|
+| `TMPDIR="$PWD/.tmp" .venv/bin/python -m pytest -q` | **PASS** — 133 passed in 23.44s, no failures, no warnings |
+| `.venv/bin/python -m ruff check .` | **PASS** — all checks passed |
+| `.venv/bin/python -m ruff format --check .` | **PASS** — 34 files already formatted |
+| `.venv/bin/python -m mypy src` | **PASS** — no issues in 20 source files |
+| `TMPDIR="$PWD/.tmp" .venv/bin/python -m build` | **PASS** — built `sentinel_parity-0.5.0.tar.gz` and `sentinel_parity-0.5.0-py3-none-any.whl` |
+| `node tests/browser/test_report_narrow_viewport.mjs` | **PASS** — 375px and 1280px; no document-wide horizontal overflow; visible heading/link/omission text; keyboard-focusable scroll region; internal horizontal scrolling at 375px |
+
+The runner stages each eligible dataset's difference cells to bounded temporary Parquet inside DuckDB (`COPY`), prefights with exact emitted Index/header/data byte measurements, counts Index rows for every dataset — including `missing_counterpart` entries — against Excel's hard row and cell dimensions, keeps configurable row budgets on cell-difference rows only, and publishes the workbook atomically with failure cleanup that retains `run.jsonl`. Workbook statuses verified end to end: generated, disabled, no_differences, omitted with reasons; preflight rejection stops staging, removes owned stage files, and never invokes the writer; failures injected at workbook open, cell write, workbook close, and publication all clean up without leaving partial artifacts.
+
+## Resource harness and experiment (this host)
+
+`tests/resource_harness.py` runs one synthetic pair per child process (Polars-generated ids plus a 96-byte text column, first N ids mismapped), fixed DuckDB 128 MB memory / 2 GB spill / 2 threads, and records OS peak RSS (`ru_maxrss`), detail bytes, staged bytes, and elapsed time; each worker removes all owned artifacts. `test_export_resource_scaling` (slow marker) asserts the large run stays under a 2 GiB RSS ceiling and that peak-RSS growth over the small run stays under a generous fixed **768 MiB** tolerance — calibrated here, actual growth was ~142 MiB for 25x mismatches, so Python retains nothing proportional to mismatch count. The single huge-cell case (`test_huge_cell_is_clipped_sql_side`, 200,000 chars) proves preview clipping happens in SQL before fetch (`preview_cell_chars=32` respected, full value only in JSONL) and the workbook is refused with `cell_limit` without staging. Intentionally tiny budget rejection is covered by the runner `excel_max_bytes=1` test and the exact-boundary comparison test.
+
+Exact measured runs (Linux x86_64, Python 3.14.7, DuckDB 1.5.5):
+
+| Run | Rows/side | Mismatches | Detail bytes | Staged bytes | Peak RSS (KiB) | Elapsed |
+|---|---|---|---|---|---|---|
+| Small | 10,000 | 1,000 | 424,673 | 163,800 | 616,436 | 0.219s |
+| Large (suite case) | 50,000 | 25,000 | 10,741,674 | 823,550 | 761,592 | 0.671s |
+| Opt-in experiment | 500,000 | 50,000 | 21,516,674 | 8,231,792 | 810,740 | 4.192s |
+
+Peak RSS grew 194,304 KiB (~190 MiB) from small to the 500k/50k opt-in run while mismatch count grew 50x — no O(mismatches) Python retention. RSS is diagnostic, not a portable ceiling; it includes the Python/Polars worker process, not DuckDB alone.
+
+## Detail size workloads (AC.7)
+
+`test_detail_size_sparse_dense_one_sided` serializes identical synthetic workloads three ways and asserts the flattened nested differences equal the flat representation exactly. Workload spec: 10,000 rows (5,000/4,000 for one-sided), `id` plus one text column; sparse changes 10 values, dense changes all, one-sided leaves a 1,000-row excess tail; legacy = v1-style full-row records for both sides including all matches; flat = one JSON line per differing cell; nested = v2 grouped records.
+
+| Workload | Detail records | Difference entries | Nested bytes | Flat bytes | Legacy bytes |
+|---|---|---|---|---|---|
+| Sparse | 10 | 10 | 2,205 | 1,595 | 1,685,560 |
+| Dense | 10,000 | 10,000 | 2,236,674 | 1,626,674 | 1,665,560 |
+| One-sided | 1,000 | 2,000 | 279,893 | 283,786 | 781,560 |
+
+As anticipated by the plan, nested is not always smallest (dense): nested groups cost more than flat lines when every row differs, while sparse and one-sided shrink legacy output by ~700x and ~2.8x respectively by eliminating matches and unchanged values.
+
+## Browser viewport test
+
+Install the browser test dependency with `npm install --no-save playwright` and the Chromium binary with `npx playwright install chromium`. Run the local-file viewport test separately from pytest: `node tests/browser/test_report_narrow_viewport.mjs`. It checks 375px and 1280px widths without starting a server.
 
 ## Environment and dependency versions
 
@@ -8,7 +55,7 @@ Validated only on Python **3.14.7**, Linux **x86_64** (`Linux-7.1.8-arch1-3-x86_
 
 External test fixture binaries and CSVs are development-only, hash-checked, ignored under `.parity-fixtures/`, and were not found in either distribution. The original upstream `missing_values.sas7bdat` with an independently pinned expected-value oracle was not obtainable. Following the operator's waiver, special-missing behavior is exercised best-effort with pyreadstat's generated `missing_test.sas7bdat`, including informative-null reason codes; this does not satisfy the original fixture provenance/oracle requirement. No production fixture redistribution is authorized.
 
-## Final automated command results
+## Historical: earlier phase command results
 
 Commands were run with pip/venv (not uv); project temp files use `TMPDIR="$PWD/.tmp"` because the host `/tmp` tmpfs is full.
 

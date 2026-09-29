@@ -218,7 +218,15 @@ details pre {
   font: 500 var(--text-sm)/1.5 var(--sans);
   color: var(--ink-muted);
 }
+.table-scroll {
+  max-height: 24rem;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--line);
+  border-radius: 0.25rem;
+}
 .preview table {
+  min-width: 56rem;
   width: 100%;
   border-collapse: collapse;
 }
@@ -284,6 +292,7 @@ footer .build { font: var(--text-xs)/1.6 var(--mono); color: var(--ink-faint); o
 <body>
 <header class="masthead">
   <h1>Sentinel parity report</h1>
+  {% if summary.excel %}<p class="run-meta">Excel: {{ summary.excel.status }}{% if summary.excel.path %} · <a href="{{ summary.excel.path }}">Download workbook</a>{% elif summary.excel.reasons %} · {% for reason in summary.excel.reasons %}{{ reason.code }}{% if reason.dataset_id %} ({{ reason.dataset_id }}){% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}</p>{% endif %}
   <div class="masthead-row">
     <span class="pill {{ summary.status }}">{{ summary.status }}</span>
     {% set statuses = summary.datasets|map(attribute='status')|list %}
@@ -375,69 +384,26 @@ footer .build { font: var(--text-xs)/1.6 var(--mono); color: var(--ink-faint); o
   {% endif %}
   {% set truncation = preview_truncation.get(dataset.id, {}) %}
   {% set preview_records = previews.get(dataset.id) or [] %}
-  {% if preview_records or truncation.get("sas", 0) or truncation.get("python", 0) %}
+  {% if dataset.get("difference_row_count", 0) == 0 and dataset.status != "PASS" and dataset.get("conditions") %}
+  <p class="preview-note">This dataset has schema or counterpart conditions but no value-difference rows.</p>
+  {% endif %}
+  {% if preview_records or truncation.get("omitted_rows", 0) %}
   <div class="preview">
-    {% set omitted = [] %}
-    {% if truncation.get("sas") %}{% set _ = omitted.append(truncation["sas"] ~ " SAS") %}{% endif %}
-    {% if truncation.get("python") %}{% set _ = omitted.append(truncation["python"] ~ " Parquet") %}{% endif %}
-    <h3>Mismatch preview{% if omitted %} — omitted {{ omitted|join(" and ") }} mismatch{{ "es" if (truncation.get("sas", 0) + truncation.get("python", 0)) != 1 }}{% endif %}</h3>
+    <h3>Difference preview{% if truncation.get("omitted_rows", 0) %} — {{ truncation["omitted_rows"] }} difference rows omitted{% endif %}</h3>
     {% if preview_records %}
-    {% macro value_chips(record, differing_only=false) %}
-    {% set diffs = record.differing_columns or [] %}
-    <span class="cell-chips">
-      {% for name, env in record["values"].items() %}
-      {% if (not differing_only) or name in diffs %}
-      {% set absent = env is not none and "value" not in env and env["type"] == "absent_column" %}
-      <span class="cell-chip {{ "is-diff" if name in diffs or absent else "" }}"><span class="name">{{ name }}</span>{% if env is none %}<span class="val">null</span>{% elif absent %}<span class="val">absent</span>{% elif "value" in env %}<span class="val">{{ env["value"] }}</span>{% else %}<span class="val">{{ env["type"] }}</span>{% endif %}</span>
-      {% endif %}
-      {% endfor %}
-    </span>
-    {% endmacro %}
-    {% macro reason_phrase(reason) -%}
-    {%- if reason == "only_sas" %}Every previewed row appears only in SAS
-    {%- elif reason == "only_python" %}Every previewed row appears only in Parquet
-    {%- elif reason == "missing_counterpart" %}Every previewed row has no counterpart on the other side
-    {%- else %}Every previewed row is flagged {{ reason }}
-    {%- endif %}
-    {%- endmacro %}
-    {% set paired = preview_records|selectattr("pair_id")|groupby("pair_id") %}
-    {% set singles = preview_records|rejectattr("pair_id")|list %}
-    {% set reasons = preview_records|map(attribute="reason")|select|unique|list %}
-    {% if not paired and singles and reasons|length == 1 %}
-    <p class="preview-note">{{ reason_phrase(reasons[0]) }}.</p>
-    {% endif %}
-    <table>
-      <thead>
-        <tr><th scope="col">Row</th><th scope="col">SAS values</th><th scope="col">Parquet values</th></tr>
-      </thead>
-      <tbody>
-        {% for pair_id, group in paired %}
-        {% set sas_group = group|selectattr("side", "equalto", "sas")|list %}
-        {% set python_group = group|selectattr("side", "equalto", "python")|list %}
-        <tr>
-          <td class="side"><span class="side-badge">sas / parquet</span><div class="row-num">{{ sas_group[0].staging_row_number if sas_group else "—" }} / {{ python_group[0].staging_row_number if python_group else "—" }}</div></td>
-          <td>{% if sas_group %}{{ value_chips(sas_group[0], true) }}{% endif %}</td>
-          <td>{% if python_group %}{{ value_chips(python_group[0], true) }}{% endif %}</td>
-        </tr>
+    <p class="preview-note">Pairs are diagnostics, not proof of row correspondence. Values are clipped for display. The JSONL link contains the complete differences.</p>
+    <div class="table-scroll" role="region" tabindex="0" aria-label="Difference preview table">
+      <table>
+        <thead><tr>{% for label in workbook_columns %}<th scope="col">{{ label }}</th>{% endfor %}</tr></thead>
+        <tbody>
+        {% for row in preview_records %}
+          {% include "preview_row.html" %}
         {% endfor %}
-        {% for row in singles %}
-        <tr>
-          <td class="side"><span class="side-badge">{{ row.side }}</span><div class="row-num">{{ row.staging_row_number }}</div></td>
-          {% if row.side == "sas" %}
-          <td>{{ value_chips(row) }}</td><td></td>
-          {% else %}
-          <td></td><td>{{ value_chips(row) }}</td>
-          {% endif %}
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-    <details class="raw-json">
-      <summary>Raw preview values (JSON)</summary>
-      <pre>{% for row in preview_records %}{{ row["values"]|tojson }}
-{% endfor %}</pre>
-    </details>
+        </tbody>
+      </table>
+    </div>
     {% endif %}
+    <p class="preview-note">Showing {{ truncation.get("shown_rows", preview_records|length) }} of {{ dataset.get("difference_row_count", 0) }} difference rows. {{ truncation.get("omitted_rows", 0) }} omitted by preview limits{% if truncation.get("reasons") %} ({{ truncation["reasons"]|join(", ") }}){% endif %}. Cell values ending in … were clipped for display.</p>
   </div>
   {% endif %}
 </section>

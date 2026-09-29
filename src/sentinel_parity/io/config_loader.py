@@ -20,6 +20,14 @@ _ALLOWED = {
     "preview_rows",
     "round_digits",
     "threads",
+    "preview_max_bytes",
+    "preview_total_max_bytes",
+    "preview_cell_chars",
+    "excel",
+    "excel_max_sheets",
+    "excel_max_rows",
+    "excel_max_rows_per_sheet",
+    "excel_max_bytes",
 }
 
 
@@ -56,10 +64,27 @@ def load_config(config_path: Path | None, overrides: dict[str, Any]) -> RunConfi
     for key in ("memory_limit", "max_temp_size"):
         if key in values and not isinstance(values[key], str):
             raise ValueError(f"{key} must be a string")
-    if "preview_rows" in values and (
-        isinstance(values["preview_rows"], bool) or not isinstance(values["preview_rows"], int)
-    ):
-        raise ValueError("preview_rows must be an integer")
+    integer_limits = (
+        "preview_rows",
+        "preview_max_bytes",
+        "preview_total_max_bytes",
+        "preview_cell_chars",
+        "excel_max_sheets",
+        "excel_max_rows",
+        "excel_max_rows_per_sheet",
+        "excel_max_bytes",
+    )
+    for key in integer_limits:
+        if key not in values:
+            continue
+        value = values[key]
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise ValueError(f"{key} must be an integer")
+        minimum = 0 if key == "preview_rows" else 1
+        if value < minimum:
+            raise ValueError(
+                f"{key} must be {'nonnegative' if key == 'preview_rows' else 'positive'}"
+            )
     if "round_digits" in values and (
         isinstance(values["round_digits"], bool) or not isinstance(values["round_digits"], int)
     ):
