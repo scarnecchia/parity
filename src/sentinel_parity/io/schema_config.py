@@ -32,7 +32,10 @@ def load_schema(path: Path) -> dict[str, tuple[str, ...]]:
             raise ValueError(f"schema section [{name}] must be a table")
         unknown = set(section) - _ALLOWED_SECTION_KEYS
         if unknown:
-            raise ValueError(f"unknown key in schema section [{name}]")
+            raise ValueError(
+                f"unknown key in schema section [{name}]: {', '.join(sorted(unknown))}. "
+                'Sections support pair_keys = ["column", ...]'
+            )
         keys = section.get("pair_keys", ())
         if not isinstance(keys, list) or any(not isinstance(key, str) or not key for key in keys):
             raise ValueError(

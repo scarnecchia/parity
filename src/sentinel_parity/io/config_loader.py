@@ -50,7 +50,7 @@ def load_config(config_path: Path | None, overrides: dict[str, Any]) -> RunConfi
             raise ValueError("failed to read valid TOML configuration") from exc
         unknown = set(values) - _ALLOWED
         if unknown:
-            raise ValueError("unknown configuration key")
+            raise ValueError("unknown configuration key: " + ", ".join(sorted(unknown)))
     for key, value in overrides.items():
         if value is not None:
             values[key] = value

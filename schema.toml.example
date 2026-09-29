@@ -14,6 +14,11 @@
 # global pair_keys (config.toml / --pair-keys) for the table and never
 # changes pass/fail. Columns are case-folded to match staged columns.
 # --no-pair-keys suppresses every declared pairing key for a run.
+#
+# A section may contain only pair_keys; any other key is a configuration
+# error naming the key. Declaring a column that exists on only one side is
+# fine: it cannot order the pairing (reported as unused_pair_keys in the
+# summary), and the dataset fails through its normal conditions.
 
 [r01_attrition]
 pair_keys = ["group", "level"]

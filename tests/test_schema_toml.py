@@ -102,6 +102,13 @@ def test_schema_toml_unknown_section_is_an_error(tmp_path: Path) -> None:
         run(RunConfig(sas, python, tmp_path / "out", schema=schema))
 
 
+def test_load_schema_names_unknown_section_keys(tmp_path: Path) -> None:
+    schema = _write_schema(tmp_path / "schema.toml", '[t]\nkeys = ["group"]\n')
+
+    with pytest.raises(ValueError, match=r"schema section \[t\]: keys"):
+        load_schema(schema)
+
+
 def test_shipped_schema_example_loads() -> None:
     schema = Path(__file__).resolve().parents[1] / "schema.toml.example"
 
@@ -109,6 +116,34 @@ def test_shipped_schema_example_loads() -> None:
         "attrition": ("group", "level"),
         "headcount": ("employee_id",),
     }
+
+
+def test_sas_only_pair_key_fails_the_dataset_without_error(tmp_path: Path) -> None:
+    sas, python = _setup_tables(tmp_path)
+    shutil.copyfile(FIXTURE, sas / "dplocal" / "third.sas7bdat")
+    if Path(".parity-fixtures/productsales.parquet").is_file():
+        frame = pl.read_parquet(".parity-fixtures/productsales.parquet")
+    else:
+        import polars_readstat
+
+        frame = polars_readstat.ScanReadstat(str(FIXTURE)).df.collect()
+    frame.drop("ACTUAL").write_parquet(python / "dplocal" / "third.parquet")
+    schema = _write_schema(tmp_path / "schema.toml", '[third]\npair_keys = ["ACTUAL"]\n')
+    out = tmp_path / "out"
+
+    # ACTUAL exists only in SAS: the run must complete and the dataset must
+    # FAIL through the normal sas_only_columns condition — declaring it as a
+    # pairing key is never a configuration error.
+    assert run(RunConfig(sas, python, out, schema=schema)) == 1
+
+    entry = next(
+        item
+        for item in json.loads((out / "summary.json").read_text())["datasets"]
+        if item["name"] == "dplocal/third.sas7bdat"
+    )
+    assert entry["status"] == "FAIL"
+    assert entry["reason"] == "sas_only_columns"
+    assert entry["unused_pair_keys"] == [{"column": "actual", "where": "sas"}]
 
 
 def test_schema_overrides_global_and_empty_and_unconfigured(tmp_path: Path) -> None:
