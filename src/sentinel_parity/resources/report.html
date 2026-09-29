@@ -228,10 +228,9 @@ details pre {
 .preview > .preview-note:first-of-type { margin: 0.5rem 0 0.75rem; max-width: 75ch; }
 .preview .scroll-hint {
   margin: 0 0 0.375rem;
-  font: 400 var(--text-xs)/1.4 var(--sans);
-  color: var(--ink-faint);
+  font: 400 var(--text-sm)/1.4 var(--sans);
+  color: var(--ink-muted);
 }
-@media (min-width: 76rem) { .preview .scroll-hint { display: none; } }
 .table-scroll {
   max-height: 24rem;
   overflow: auto;
@@ -308,6 +307,7 @@ footer {
   color: var(--ink-muted);
 }
 footer p { margin: 0 0 0.375rem; max-width: 75ch; }
+footer p.build { max-width: none; }
 footer .build { font: var(--text-sm)/1.5 var(--mono); color: var(--ink-muted); overflow-wrap: anywhere; }
 
 @media print {
@@ -438,7 +438,7 @@ footer .build { font: var(--text-sm)/1.5 var(--mono); color: var(--ink-muted); o
     <p class="scroll-hint">Scroll horizontally for types and row numbers.</p>
     <div class="table-scroll" role="region" tabindex="0" aria-label="Difference preview table">
       <table>
-        <colgroup>{% for _, class_name in preview_columns %}<col class="{{ class_name }}">{% endfor %}</colgroup>
+        <colgroup>{% for col_class in preview_col_classes %}<col class="{{ col_class }}">{% endfor %}</colgroup>
         <thead><tr>{% for label, class_name in preview_columns %}<th scope="col"{% if class_name %} class="{{ class_name }}"{% endif %}>{{ label }}</th>{% endfor %}</tr></thead>
         <tbody>
         {% for row in preview_records %}
