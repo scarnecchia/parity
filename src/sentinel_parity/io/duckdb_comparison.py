@@ -79,11 +79,21 @@ def compare(
         shared_names = set(shared)
         declared_keys = list(dict.fromkeys(str(name).casefold() for name in pair_keys if name))
         effective_pair_keys = [name for name in declared_keys if name in shared_names]
-        if declared_keys and len(effective_pair_keys) < len(declared_keys):
+        unused_pair_keys = [
+            {
+                "column": name,
+                "where": (
+                    "sas" if name in left_names else "python" if name in right_names else "absent"
+                ),
+            }
+            for name in declared_keys
+            if name not in shared_names
+        ]
+        if unused_pair_keys:
             run_log.event(
                 "pair_keys_unused",
                 dataset=dataset_id,
-                keys=[name for name in declared_keys if name not in shared_names],
+                keys=[item["column"] for item in unused_pair_keys],
             )
         crossed = [
             name
@@ -208,6 +218,7 @@ def compare(
             "difference_row_count": difference_rows,
             "details_bytes": details_bytes,
             "pair_keys": effective_pair_keys,
+            "unused_pair_keys": unused_pair_keys,
             "preview_rows": preview,
             "workbook_measurements": workbook_measurements,
             "workbook_stage_path": workbook_stage_path

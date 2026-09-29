@@ -270,6 +270,7 @@ def _execute(config: RunConfig) -> int:
                         "difference_row_count": difference_count,
                         "details_bytes": details_bytes,
                         "pair_keys": result["pair_keys"],
+                        "unused_pair_keys": result["unused_pair_keys"],
                         "preview_truncation": truncation,
                         "workbook_measurements": result["workbook_measurements"],
                         "detail_complete": True,

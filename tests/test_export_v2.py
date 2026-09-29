@@ -206,9 +206,13 @@ def test_pair_keys_dropped_when_missing_from_shared_columns(tmp_path: Path) -> N
         tmp_path,
         {"g": [1, 2], "sas_extra": ["a", "b"]},
         {"g": [2, 1], "py_extra": ["x", "y"]},
-        pair_keys=("g", "missing_col"),
+        pair_keys=("g", "missing_col", "sas_extra"),
     )
     assert result["pair_keys"] == ["g"]
+    assert result["unused_pair_keys"] == [
+        {"column": "missing_col", "where": "absent"},
+        {"column": "sas_extra", "where": "sas"},
+    ]
 
 
 def test_pair_keys_casefolded_to_staged_names(tmp_path: Path) -> None:
@@ -300,6 +304,7 @@ def test_report_explains_pairing_basis_flags_key_rows_and_reasons(tmp_path: Path
                 "difference_row_count": 1,
                 "conditions": [],
                 "pair_keys": ["group"],
+                "unused_pair_keys": [{"column": "missing_col", "where": "absent"}],
             }
         ],
         "preview_truncation": {},
@@ -317,6 +322,7 @@ def test_report_explains_pairing_basis_flags_key_rows_and_reasons(tmp_path: Path
         in html
     )
     assert "(dataset-2)" not in html
+    assert "Ignored pairing keys, absent from one side:" in html
 
     summary["datasets"][0]["conditions"] = [
         {
