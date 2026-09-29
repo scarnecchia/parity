@@ -868,7 +868,6 @@ def test_uppercase_sas_extension_reads_real_fixture_pair(tmp_path: Path) -> None
 
 def test_multiset_comparison_oracle(tmp_path: Path) -> None:
     sas, python = _roots(tmp_path)
-    # Build a valid SAS sample and match it exactly as Parquet.
     sas_file = sas / "dplocal" / "sample.sas7bdat"
     shutil.copyfile(
         Path(__file__).resolve().parents[1] / ".parity-fixtures" / "productsales.sas7bdat", sas_file

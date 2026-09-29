@@ -53,6 +53,38 @@ def run_command(
         int | None, typer.Option("--preview-total-max-bytes")
     ] = None,
     preview_cell_chars: Annotated[int | None, typer.Option("--preview-cell-chars")] = None,
+    schema: Annotated[
+        Path | None,
+        typer.Option(
+            "--schema",
+            help=(
+                "TOML file mapping table names to per-table pair_keys (join keys); section "
+                "names are case-folded stems with one leading rNN_ prefix ignored."
+            ),
+        ),
+    ] = None,
+    pair_keys: Annotated[
+        str | None,
+        typer.Option(
+            "--pair-keys",
+            help=(
+                "Comma-separated shared columns used as join keys: both tables are ordered "
+                "by these columns and each row is compared only with the row whose key "
+                "values are equal; rows with no key match are listed one-sided. Remaining "
+                "shared columns order rows within equal keys."
+            ),
+        ),
+    ] = None,
+    no_pair_keys: Annotated[
+        bool,
+        typer.Option(
+            "--no-pair-keys",
+            help=(
+                "Run without any declared pairing keys: overrides the TOML "
+                "pair_keys, --pair-keys, and schema.toml for this run."
+            ),
+        ),
+    ] = False,
     excel: Annotated[bool | None, typer.Option("--excel/--no-excel")] = None,
     excel_max_sheets: Annotated[int | None, typer.Option("--excel-max-sheets")] = None,
     excel_max_rows: Annotated[int | None, typer.Option("--excel-max-rows")] = None,
@@ -78,6 +110,12 @@ def run_command(
     ] = None,
 ) -> None:
     """Compare discovered datasets and write a local report."""
+    declared_pair_keys: tuple[str, ...] | None = None
+    if pair_keys and pair_keys.strip():
+        names = tuple(name.strip() for name in pair_keys.split(",") if name.strip())
+        declared_pair_keys = names or None
+    if no_pair_keys:
+        declared_pair_keys = ()
     try:
         config_value = load_config(
             config,
@@ -93,6 +131,8 @@ def run_command(
                 "preview_max_bytes": preview_max_bytes,
                 "preview_total_max_bytes": preview_total_max_bytes,
                 "preview_cell_chars": preview_cell_chars,
+                "schema": schema,
+                "pair_keys": declared_pair_keys,
                 "excel": excel,
                 "excel_max_sheets": excel_max_sheets,
                 "excel_max_rows": excel_max_rows,

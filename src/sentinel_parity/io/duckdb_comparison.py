@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import time
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import duckdb
 
@@ -33,6 +33,7 @@ def compare(
     preview_cell_chars: int = 512,
     workbook_stage_path: Path | None = None,
     workbook_remaining: dict[str, int] | None = None,
+    pair_keys: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     work.mkdir(parents=True, exist_ok=True)
     artifact_id = uuid.uuid4().hex
@@ -72,6 +73,32 @@ def compare(
         sas_only_columns = [name for name in left_columns if name not in right_names]
         python_only_columns = [name for name in right_columns if name not in left_names]
         shared = [name for name in left_columns if name in right_names]
+        # Match staged column casing. Log unusable keys to expose typos and schema drift.
+        shared_names = set(shared)
+        declared_keys = list(dict.fromkeys(str(name).casefold() for name in pair_keys if name))
+        effective_pair_keys = [name for name in declared_keys if name in shared_names]
+        unused_pair_keys = [
+            {
+                "column": name,
+                "where": (
+                    "sas" if name in left_names else "python" if name in right_names else "absent"
+                ),
+            }
+            for name in declared_keys
+            if name not in shared_names
+        ]
+        if unused_pair_keys:
+            run_log.event(
+                "pair_keys_unused",
+                dataset=dataset_id,
+                keys=[item["column"] for item in unused_pair_keys],
+            )
+        crossed = [
+            name
+            for name in shared
+            if {_dtype_kind(left["types"][name]), _dtype_kind(right["types"][name])}
+            == {"number", "text"}
+        ]
         union = left_columns + [name for name in right_columns if name not in left_names]
         detail_path = work / f"{artifact_id}.jsonl"
         conditions: list[dict[str, Any]] = []
@@ -90,9 +117,16 @@ def compare(
         matched = sas_only = python_only = order_mismatches = 0
         counts: dict[str, int] = {}
         pair_count = 0
-        crossed: list[str] = []
         if shared:
-            matched, sas_only, python_only, order_mismatches = _compare_shared(
+            (
+                matched,
+                sas_only,
+                python_only,
+                order_mismatches,
+                counts,
+                pair_count,
+                all_crossed,
+            ) = _compare_shared(
                 connection,
                 left,
                 right,
@@ -104,26 +138,18 @@ def compare(
                 dataset_id,
                 preview_rows,
                 preview_cell_chars,
+                pair_keys=effective_pair_keys,
+                crossed=crossed,
             )
             if sas_only or python_only:
-                crossed = [
-                    name
-                    for name in shared
-                    if {_dtype_kind(left["types"][name]), _dtype_kind(right["types"][name])}
-                    == {"number", "text"}
-                ]
-                counts = _difference_counts(connection)
-                pair_count = _scalar_count(
-                    connection,
-                    "SELECT count(*) FROM pair_differences WHERE kind='paired_mismatch'",
-                )
-                type_explains = (
-                    sas_only == python_only == pair_count
-                    and _all_pair_differences_crossed(connection, crossed)
-                )
+                type_explains = sas_only == python_only == pair_count and all_crossed
                 if type_explains:
                     conditions.append(
-                        {"severity": "WARN", "reason": "type_mismatch", "columns": crossed}
+                        {
+                            "severity": "WARN",
+                            "reason": "type_mismatch",
+                            "columns": crossed,
+                        }
                     )
                 else:
                     conditions.append({"severity": "FAIL", "reason": "value_mismatch"})
@@ -180,6 +206,8 @@ def compare(
             "differing_pair_count": pair_count,
             "difference_row_count": difference_rows,
             "details_bytes": details_bytes,
+            "pair_keys": effective_pair_keys,
+            "unused_pair_keys": unused_pair_keys,
             "preview_rows": preview,
             "workbook_measurements": workbook_measurements,
             "workbook_stage_path": workbook_stage_path
@@ -189,6 +217,18 @@ def compare(
         }
     finally:
         connection.close()
+
+
+class SharedOutcome(NamedTuple):
+    """Severity classification on the exported pairing plus its diagnostics."""
+
+    matched: int
+    sas_only: int
+    python_only: int
+    order_mismatches: int
+    counts: dict[str, int]
+    pair_count: int
+    all_crossed: bool
 
 
 def _compare_shared(
@@ -203,7 +243,9 @@ def _compare_shared(
     dataset_id: str,
     preview_rows: int,
     cell_chars: int,
-) -> tuple[int, int, int, int]:
+    pair_keys: list[str],
+    crossed: list[str],
+) -> SharedOutcome:
     keys = ", ".join(quote_identifier("k_" + name) for name in shared)
     for side in ("sas", "python"):
         ranked_sql = (
@@ -231,85 +273,145 @@ def _compare_shared(
         on = " AND ".join(
             f"s.{quote_identifier('k_' + n)}=c.{quote_identifier('k_' + n)}" for n in shared
         )
-        excess_sql = (
+        connection.execute(
             f"CREATE TABLE {side}_excess AS SELECT s.* FROM {side}_ranked s "
             f"LEFT JOIN {other}_counts c ON {on} "
             "WHERE s.occurrence > coalesce(c.n, 0)"
         )
-        pair_sql = (
-            f"CREATE TABLE {side}_pair AS SELECT *, "
-            "row_number() OVER (ORDER BY "
-            + ", ".join(f"{quote_identifier('k_' + name)} ASC NULLS FIRST" for name in shared)
-            # Ordinal breaks ties between excess rows equal on every shared
-            # column so identical reruns pair identically.
-            + ", ordinal) pair_rank "
-            + f"FROM {side}_excess"
-        )
-        connection.execute(excess_sql)
-        connection.execute(pair_sql)
-    pair_match = "l.pair_rank=r.pair_rank"
+
     tests = " OR ".join(
         f"l.{quote_identifier('k_' + n)} IS DISTINCT FROM r.{quote_identifier('k_' + n)}"
         for n in shared
     )
-    pair_query = (
-        "CREATE TABLE pair_differences AS SELECT "
-        "l.ordinal AS s_ordinal,r.ordinal AS p_ordinal,"
-        "coalesce(l.pair_rank,r.pair_rank) AS pair_rank,"
-        "CASE WHEN l.ordinal IS NULL THEN 'only_python' "
-        "WHEN r.ordinal IS NULL THEN 'only_sas' ELSE 'paired_mismatch' END AS kind "
-        "FROM sas_pair l FULL JOIN python_pair r ON "
-        + pair_match
-        + " WHERE l.ordinal IS NULL OR r.ordinal IS NULL OR ("
-        + tests
-        + ")"
-    )
-    connection.execute(pair_query)
-    cells = []
-    for name in union:
-        if name in left_names and name in right_names:
-            cells.append(
-                "SELECT d.s_ordinal,d.p_ordinal,d.pair_rank,d.kind,"
-                f"{_sql_string(name)} AS column_name,"
-                f"l.{quote_identifier('v_' + name)} AS sas,"
-                f"r.{quote_identifier('v_' + name)} AS python "
-                "FROM pair_differences d JOIN sas_pair l ON l.ordinal=d.s_ordinal "
-                "JOIN python_pair r ON r.ordinal=d.p_ordinal "
-                "WHERE d.kind='paired_mismatch' AND "
-                f"l.{quote_identifier('k_' + name)} IS DISTINCT FROM "
-                f"r.{quote_identifier('k_' + name)}"
+    # Join excess rows on null-safe key equality. Within each key, pair by remaining-column order.
+    # Unmatched keys stay one-sided. Without keys, pair by value order across all shared columns.
+    residual = [name for name in shared if name not in pair_keys]
+
+    def build_difference_tables() -> None:
+        if pair_keys:
+            for side in ("sas", "python"):
+                connection.execute(
+                    f"CREATE TABLE {side}_pair AS SELECT *, "
+                    "row_number() OVER (PARTITION BY "
+                    + ", ".join(quote_identifier("k_" + name) for name in pair_keys)
+                    + " ORDER BY "
+                    + ", ".join(
+                        [
+                            *(
+                                f"{quote_identifier('k_' + name)} ASC NULLS FIRST"
+                                for name in residual
+                            ),
+                            "ordinal",
+                        ]
+                    )
+                    + ") key_rank "
+                    + f"FROM {side}_excess"
+                )
+            keyed_on = (
+                " AND ".join(
+                    f"l.{quote_identifier('k_' + n)} IS NOT DISTINCT FROM "
+                    f"r.{quote_identifier('k_' + n)}"
+                    for n in pair_keys
+                )
+                + " AND l.key_rank=r.key_rank"
             )
-            cells.append(
-                "SELECT d.s_ordinal,d.p_ordinal,d.pair_rank,d.kind,"
-                f"{_sql_string(name)} AS column_name,"
-                f"l.{quote_identifier('v_' + name)} AS sas,NULL::VARCHAR AS python "
-                "FROM pair_differences d JOIN sas_pair l ON l.ordinal=d.s_ordinal "
-                "WHERE d.kind='only_sas'"
-            )
-            cells.append(
-                "SELECT d.s_ordinal,d.p_ordinal,d.pair_rank,d.kind,"
-                f"{_sql_string(name)} AS column_name,"
-                f"NULL::VARCHAR AS sas,r.{quote_identifier('v_' + name)} AS python "
-                "FROM pair_differences d JOIN python_pair r ON r.ordinal=d.p_ordinal "
-                "WHERE d.kind='only_python'"
-            )
-        elif name in left_names:
-            cells.append(
-                "SELECT d.s_ordinal,d.p_ordinal,d.pair_rank,d.kind,"
-                f"{_sql_string(name)} AS column_name,"
-                f"l.{quote_identifier('v_' + name)} AS sas,NULL::VARCHAR AS python "
-                "FROM pair_differences d JOIN sas_pair l ON l.ordinal=d.s_ordinal "
-                "WHERE d.kind='only_sas'"
+            pair_query = (
+                "CREATE TABLE pair_differences AS SELECT row_number() OVER (ORDER BY "
+                + ", ".join(
+                    f"coalesce(l.{quote_identifier('k_' + n)},r.{quote_identifier('k_' + n)})"
+                    " ASC NULLS FIRST"
+                    for n in pair_keys
+                )
+                + ",coalesce(l.key_rank,r.key_rank),l.ordinal NULLS FIRST,"
+                "r.ordinal NULLS FIRST) AS pair_rank,"
+                "l.ordinal AS s_ordinal,r.ordinal AS p_ordinal,"
+                "CASE WHEN l.ordinal IS NULL THEN 'only_python' "
+                "WHEN r.ordinal IS NULL THEN 'only_sas' ELSE 'paired_mismatch' END AS kind "
+                "FROM sas_pair l FULL JOIN python_pair r ON "
+                + keyed_on
+                + " WHERE l.ordinal IS NULL OR r.ordinal IS NULL OR ("
+                + tests
+                + ")"
             )
         else:
-            cells.append(
-                "SELECT d.s_ordinal,d.p_ordinal,d.pair_rank,d.kind,"
-                f"{_sql_string(name)} AS column_name,"
-                f"NULL::VARCHAR AS sas,r.{quote_identifier('v_' + name)} AS python "
-                "FROM pair_differences d JOIN python_pair r ON r.ordinal=d.p_ordinal "
-                "WHERE d.kind='only_python'"
+            for side in ("sas", "python"):
+                connection.execute(
+                    f"CREATE TABLE {side}_pair AS SELECT *, "
+                    "row_number() OVER (ORDER BY "
+                    + ", ".join(
+                        f"{quote_identifier('k_' + name)} ASC NULLS FIRST" for name in shared
+                    )
+                    + ", ordinal) pair_rank "
+                    + f"FROM {side}_excess"
+                )
+            pair_query = (
+                "CREATE TABLE pair_differences AS SELECT "
+                "l.ordinal AS s_ordinal,r.ordinal AS p_ordinal,"
+                "coalesce(l.pair_rank,r.pair_rank) AS pair_rank,"
+                "CASE WHEN l.ordinal IS NULL THEN 'only_python' "
+                "WHEN r.ordinal IS NULL THEN 'only_sas' ELSE 'paired_mismatch' END AS kind "
+                "FROM sas_pair l FULL JOIN python_pair r ON l.pair_rank=r.pair_rank "
+                "WHERE l.ordinal IS NULL OR r.ordinal IS NULL OR (" + tests + ")"
             )
-    connection.execute("CREATE TABLE pair_cells AS " + " UNION ALL ".join(cells))
+        connection.execute(pair_query)
+        cells = []
+        for name in union:
+            if name in left_names and name in right_names:
+                cells.append(
+                    "SELECT d.s_ordinal,d.p_ordinal,d.pair_rank,d.kind,"
+                    f"{_sql_string(name)} AS column_name,"
+                    f"l.{quote_identifier('v_' + name)} AS sas,"
+                    f"r.{quote_identifier('v_' + name)} AS python "
+                    "FROM pair_differences d JOIN sas_pair l ON l.ordinal=d.s_ordinal "
+                    "JOIN python_pair r ON r.ordinal=d.p_ordinal "
+                    "WHERE d.kind='paired_mismatch' AND "
+                    f"l.{quote_identifier('k_' + name)} IS DISTINCT FROM "
+                    f"r.{quote_identifier('k_' + name)}"
+                )
+                cells.append(
+                    "SELECT d.s_ordinal,d.p_ordinal,d.pair_rank,d.kind,"
+                    f"{_sql_string(name)} AS column_name,"
+                    f"l.{quote_identifier('v_' + name)} AS sas,NULL::VARCHAR AS python "
+                    "FROM pair_differences d JOIN sas_pair l ON l.ordinal=d.s_ordinal "
+                    "WHERE d.kind='only_sas'"
+                )
+                cells.append(
+                    "SELECT d.s_ordinal,d.p_ordinal,d.pair_rank,d.kind,"
+                    f"{_sql_string(name)} AS column_name,"
+                    f"NULL::VARCHAR AS sas,r.{quote_identifier('v_' + name)} AS python "
+                    "FROM pair_differences d JOIN python_pair r ON r.ordinal=d.p_ordinal "
+                    "WHERE d.kind='only_python'"
+                )
+            elif name in left_names:
+                cells.append(
+                    "SELECT d.s_ordinal,d.p_ordinal,d.pair_rank,d.kind,"
+                    f"{_sql_string(name)} AS column_name,"
+                    f"l.{quote_identifier('v_' + name)} AS sas,NULL::VARCHAR AS python "
+                    "FROM pair_differences d JOIN sas_pair l ON l.ordinal=d.s_ordinal "
+                    "WHERE d.kind='only_sas'"
+                )
+            else:
+                cells.append(
+                    "SELECT d.s_ordinal,d.p_ordinal,d.pair_rank,d.kind,"
+                    f"{_sql_string(name)} AS column_name,"
+                    f"NULL::VARCHAR AS sas,r.{quote_identifier('v_' + name)} AS python "
+                    "FROM pair_differences d JOIN python_pair r ON r.ordinal=d.p_ordinal "
+                    "WHERE d.kind='only_python'"
+                )
+        connection.execute("CREATE TABLE pair_cells AS " + " UNION ALL ".join(cells))
+
+    # Classify severity on these exported pairs, not on a separate value-order pairing.
+    build_difference_tables()
+    counts: dict[str, int] = {}
+    pair_count = 0
+    all_crossed = False
+    if sas_only or python_only:
+        counts = _difference_counts(connection)
+        pair_count = _scalar_count(
+            connection,
+            "SELECT count(*) FROM pair_differences WHERE kind='paired_mismatch'",
+        )
+        all_crossed = _all_pair_differences_crossed(connection, crossed)
     _export_pair_cells(connection, detail_path, dataset_id)
     connection.execute(
         "CREATE TEMP TABLE preview_source AS SELECT pair_rank AS pair_id,kind,column_name,"
@@ -330,7 +432,15 @@ def _compare_shared(
         + " WHERE l.ordinal != r.ordinal"
     )
     order = connection.execute(order_query).fetchone()
-    return matched, sas_only, python_only, int(order[0] if order else 0)
+    return SharedOutcome(
+        matched=matched,
+        sas_only=sas_only,
+        python_only=python_only,
+        order_mismatches=int(order[0] if order else 0),
+        counts=counts,
+        pair_count=pair_count,
+        all_crossed=all_crossed,
+    )
 
 
 def _bounded_preview(
@@ -359,17 +469,21 @@ def _bounded_preview(
         s_ord,
         p_ord,
     ) in rows:
+        sas_text, sas_marker = _preview_value(
+            sas_type, sas_canonical, sas_value, s_ord is not None, sas_missing
+        )
+        python_text, python_marker = _preview_value(
+            python_type, python_canonical, python_value, p_ord is not None, python_missing
+        )
         result.append(
             {
                 "pair_id": pair,
                 "kind": kind,
                 "column": column,
-                "sas": _preview_value(
-                    sas_type, sas_canonical, sas_value, s_ord is not None, sas_missing
-                ),
-                "python": _preview_value(
-                    python_type, python_canonical, python_value, p_ord is not None, python_missing
-                ),
+                "sas": sas_text,
+                "sas_marker": sas_marker,
+                "python": python_text,
+                "python_marker": python_marker,
                 "sas_type": sas_type,
                 "python_type": python_type,
                 "sas_row": s_ord,
@@ -396,17 +510,18 @@ def _preview_value(
     value: str | None,
     present: bool,
     missing: bool,
-) -> str:
+) -> tuple[str, bool]:
+    """Return the display text plus whether it is an annotation, not a value."""
     if not present:
-        return "(no row)"
+        return "(no row)", True
     if kind is None:
-        return "(missing)"
+        return "(missing)", True
     if value is None:
-        return "(missing)"
+        return "(missing)", True
     if canonical == "null" or missing:
         # SQL checks the full envelope before clipping, preserving its missing status.
-        return f"{value} (compares as missing)"
-    return value
+        return f"{value} (compares as missing)", True
+    return value, False
 
 
 def _one_sided_no_shared(

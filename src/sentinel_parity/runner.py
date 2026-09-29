@@ -15,17 +15,38 @@ from importlib.metadata import version
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from sentinel_parity.core.discovery import pair_files
+from sentinel_parity.core.discovery import normalize_identity_stem, pair_files
 from sentinel_parity.core.export_policy import ExcelLimits, WorkbookMeasurements, excel_omissions
 from sentinel_parity.io import run_log
 from sentinel_parity.io.discovery import discover, validate_roots_and_output
 from sentinel_parity.io.duckdb_comparison import compare
 from sentinel_parity.io.report_writer import publish
+from sentinel_parity.io.schema_config import load_schema
 from sentinel_parity.io.staging import stage
 from sentinel_parity.io.workbook_writer import safe_sheet_names, write_workbook
 
 if TYPE_CHECKING:
     from sentinel_parity.config import RunConfig
+    from sentinel_parity.core.discovery import Pairing
+
+
+def _table_pair_keys(config: RunConfig, pairing: Pairing) -> dict[str, tuple[str, ...]]:
+    """Resolve per-table pairing keys from the optional schema.toml file.
+
+    Validate even when ignore_pair_keys disables pairing, so typos remain visible.
+    Sections must name a SAS table. Ignore sections without a Parquet counterpart:
+    those datasets already fail as missing_counterpart and never reach comparison.
+    """
+    if config.schema is None:
+        return {}
+    tables = load_schema(config.schema)
+    sas_stems = {normalize_identity_stem(sas.stem) for sas, _ in pairing.matched}
+    sas_stems |= {normalize_identity_stem(entry.stem) for entry in pairing.sas_only}
+    unknown = sorted(set(tables) - sas_stems)
+    if unknown:
+        raise ValueError("schema.toml has sections matching no SAS table: " + ", ".join(unknown))
+    run_log.event("schema_loaded", tables=len(tables))
+    return tables
 
 
 def run(config: RunConfig, *, verbose: bool = False) -> int:
@@ -71,6 +92,7 @@ def _execute(config: RunConfig) -> int:
     )
     if not pairing.matched:
         raise ValueError("no matched dataset pairs found")
+    table_pair_keys = _table_pair_keys(config, pairing)
     output = config.effective_output_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)
     run_log.attach(output / "run.jsonl")
@@ -93,9 +115,7 @@ def _execute(config: RunConfig) -> int:
     any_fail = bool(pairing.sas_only or pairing.python_only)
     any_warn = False
     try:
-        # Pairing already proved these files have no equivalent on the other
-        # side, so they are never opened: unmatched inputs can be huge, and
-        # staging them would only recover counts the comparison cannot use.
+        # Do not read unmatched files. Their counts cannot contribute to a comparison.
         for side, entries in (("sas", pairing.sas_only), ("python", pairing.python_only)):
             for entry in entries:
                 ident = uuid.uuid4().hex
@@ -134,6 +154,12 @@ def _execute(config: RunConfig) -> int:
         )
         for sas, python in matched_pairs:
             ident = uuid.uuid4().hex
+            # --no-pair-keys suppresses schema keys as well as the global default.
+            pair_keys = (
+                ()
+                if config.ignore_pair_keys
+                else table_pair_keys.get(normalize_identity_stem(sas.stem), config.pair_keys)
+            )
             dataset_work = run_temp / f"dataset-{ident}"
             dataset_work.mkdir()
             name = f"{sas.directory}/{sas.filename}"
@@ -160,6 +186,7 @@ def _execute(config: RunConfig) -> int:
                     threads=config.threads,
                     preview_rows=config.preview_rows,
                     preview_cell_chars=config.preview_cell_chars,
+                    pair_keys=pair_keys,
                     workbook_stage_path=(
                         dataset_work / "workbook.parquet"
                         if config.excel and not workbook_reasons
@@ -237,6 +264,8 @@ def _execute(config: RunConfig) -> int:
                         "differing_pair_count": pair_count,
                         "difference_row_count": difference_count,
                         "details_bytes": details_bytes,
+                        "pair_keys": result["pair_keys"],
+                        "unused_pair_keys": result["unused_pair_keys"],
                         "preview_truncation": truncation,
                         "workbook_measurements": result["workbook_measurements"],
                         "detail_complete": True,
@@ -364,8 +393,7 @@ def _execute(config: RunConfig) -> int:
             else "no_differences"
         )
         if workbook_status != "generated" and staged_paths:
-            # The workbook will not be written; release staging now instead of
-            # holding the files until run-temp cleanup.
+            # Release unused staging before report publication to reduce disk use.
             for leftover in staged_paths.values():
                 leftover.unlink(missing_ok=True)
             staged_paths.clear()

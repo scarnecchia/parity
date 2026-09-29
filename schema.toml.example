@@ -1,0 +1,26 @@
+# Copy to schema.toml and run: parity run --schema schema.toml.
+# Each section names one table and configures it for this run.
+
+# Section names use case-folded filename stems, without one leading rNN_ prefix.
+# [r01_attrition] and [attrition] both match r01_attrition.sas7bdat or attrition.parquet.
+# One section applies across directories, including both dplocal and msoc.
+# A section without a matching SAS table is a configuration error.
+# Sections without a Parquet counterpart are ignored: those datasets already fail as missing_counterpart.
+#
+# pair_keys is the only supported setting. It overrides config.toml / --pair-keys for this table.
+# Pair excess rows only on equal key values. Rows without a key match stay one-sided.
+# Column names are case-folded. --no-pair-keys disables all declared keys for the run.
+#
+# Other settings cause a configuration error. Keys present on only one side cannot join rows.
+# The summary lists them as unused_pair_keys. Normal dataset conditions still apply.
+
+[r01_attrition]
+pair_keys = ["group", "level"]
+
+[headcount]
+pair_keys = ["employee_id"]
+
+# An empty pair_keys list falls back to value-order pairing for that table,
+# overriding the global default.
+#[surveys]
+#pair_keys = []

@@ -23,11 +23,13 @@ _ALLOWED = {
     "preview_max_bytes",
     "preview_total_max_bytes",
     "preview_cell_chars",
+    "pair_keys",
     "excel",
     "excel_max_sheets",
     "excel_max_rows",
     "excel_max_rows_per_sheet",
     "excel_max_bytes",
+    "schema",
 }
 
 
@@ -48,19 +50,26 @@ def load_config(config_path: Path | None, overrides: dict[str, Any]) -> RunConfi
             raise ValueError("failed to read valid TOML configuration") from exc
         unknown = set(values) - _ALLOWED
         if unknown:
-            raise ValueError("unknown configuration key")
+            raise ValueError("unknown configuration key: " + ", ".join(sorted(unknown)))
     for key, value in overrides.items():
         if value is not None:
             values[key] = value
     if "sas_root" not in values or "python_root" not in values:
         raise ValueError("both sas_root and python_root are required")
-    for key in ("sas_root", "python_root", "output_dir", "temp_dir"):
+    for key in ("sas_root", "python_root", "output_dir", "temp_dir", "schema"):
         if key in values and values[key] is not None:
             if not isinstance(values[key], (str, Path)):
                 raise ValueError(f"{key} must be a string path")
             values[key] = _path(
                 values[key], base if key not in overrides or overrides[key] is None else Path.cwd()
             )
+    if "pair_keys" in values:
+        keys = values["pair_keys"]
+        if not isinstance(keys, (list, tuple)) or any(
+            not isinstance(key, str) or not key for key in keys
+        ):
+            raise ValueError("pair_keys must be a list of nonempty column names")
+        values["pair_keys"] = tuple(keys)
     for key in ("memory_limit", "max_temp_size"):
         if key in values and not isinstance(values[key], str):
             raise ValueError(f"{key} must be a string")

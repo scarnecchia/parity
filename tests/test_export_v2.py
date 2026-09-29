@@ -26,6 +26,7 @@ def _compare(
     *,
     workbook_stage_path: Path | None = None,
     workbook_remaining: dict[str, int] | None = None,
+    pair_keys: tuple[str, ...] = (),
 ) -> dict:
     for name in ("sas", "python", "compare"):
         (tmp_path / name).mkdir(parents=True)
@@ -44,6 +45,7 @@ def _compare(
         preview_rows=1,
         workbook_stage_path=workbook_stage_path,
         workbook_remaining=workbook_remaining,
+        pair_keys=pair_keys,
     )
 
 
@@ -168,6 +170,224 @@ def test_missing_whitespace_set_matches_python_rstrip() -> None:
     assert codes == sorted(cp for cp in range(0x110000) if chr(cp).rstrip() == "")
 
 
+def test_declared_keys_realign_excess_pairing_by_key_value(tmp_path: Path) -> None:
+    left = {"a": [1, 2], "z": [2000, 1990]}
+    right = {"a": [1, 2], "z": [1990, 2000]}
+    automatic = _compare(tmp_path / "auto", left, right)
+    keyed = _compare(tmp_path / "keyed", left, right, pair_keys=("z",))
+
+    def paired_columns(result: dict) -> list[set[str]]:
+        records = [
+            json.loads(line)
+            for line in Path(result["details_path"]).read_text().splitlines()
+            if json.loads(line)["kind"] == "paired_mismatch"
+        ]
+        return [{item["column"] for item in record["differences"]} for record in records]
+
+    # Value-order pairing ranks by a first: excess rows pair on equal a and
+    # differ only in z.
+    assert all(columns == {"z"} for columns in paired_columns(automatic))
+    assert automatic["differing_column_counts"] == {"z": 2}
+    # Declared keys join on z: the same excess rows pair on equal z and differ
+    # only in a. Diagnostic counts describe the exported pairs.
+    assert keyed["pair_keys"] == ["z"]
+    assert all(columns == {"a"} for columns in paired_columns(keyed))
+    assert keyed["differing_column_counts"] == {"a": 2}
+    assert automatic["status"] == keyed["status"] == "FAIL"
+
+
+def test_pair_keys_dropped_when_missing_from_shared_columns(tmp_path: Path) -> None:
+    result = _compare(
+        tmp_path,
+        {"g": [1, 2], "sas_extra": ["a", "b"]},
+        {"g": [2, 1], "py_extra": ["x", "y"]},
+        pair_keys=("g", "missing_col", "sas_extra"),
+    )
+    assert result["pair_keys"] == ["g"]
+    assert result["unused_pair_keys"] == [
+        {"column": "missing_col", "where": "absent"},
+        {"column": "sas_extra", "where": "sas"},
+    ]
+
+
+def test_pair_keys_casefolded_to_staged_names(tmp_path: Path) -> None:
+    result = _compare(
+        tmp_path,
+        {"Product": ["a", "b"], "region": ["x", "x"]},
+        {"Product": ["c", "d"], "region": ["x", "x"]},
+        pair_keys=("PRODUCT",),
+    )
+    assert result["pair_keys"] == ["product"]
+    # No product appears on both sides, so every row is one-sided.
+    records = [json.loads(line) for line in Path(result["details_path"]).read_text().splitlines()]
+    assert sorted(record["kind"] for record in records) == [
+        "only_python",
+        "only_python",
+        "only_sas",
+        "only_sas",
+    ]
+
+
+def test_declared_keys_pair_rows_across_different_staging_orders(tmp_path: Path) -> None:
+    left = {"id": [3, 1, 2], "bd": ["c", "a", "b"]}
+    right = {"id": [1, 2, 3], "bd": ["X", "Y", "Z"]}
+    result = _compare(tmp_path, left, right, pair_keys=("id",))
+    assert result["status"] == "FAIL"
+    records = [
+        json.loads(line)
+        for line in Path(result["details_path"]).read_text().splitlines()
+        if json.loads(line)["kind"] == "paired_mismatch"
+    ]
+    assert len(records) == 3
+    assert all([item["column"] for item in record["differences"]] == ["bd"] for record in records)
+    # id=3 (SAS ordinal 0) pairs with the Parquet id=3 row (ordinal 2), etc.
+    assert sorted((record["sas_row"], record["python_row"]) for record in records) == [
+        (0, 2),
+        (1, 0),
+        (2, 1),
+    ]
+
+
+def test_declared_keys_join_null_values(tmp_path: Path) -> None:
+    left = {"k": [None, "a"], "v": [1, 2]}
+    right = {"k": [None], "v": [9]}
+    result = _compare(tmp_path, left, right, pair_keys=("k",))
+    records = [json.loads(line) for line in Path(result["details_path"]).read_text().splitlines()]
+    paired = [record for record in records if record["kind"] == "paired_mismatch"]
+    one_sided = [record for record in records if record["kind"] == "only_sas"]
+    assert len(paired) == 1 and len(one_sided) == 1
+    assert paired[0]["sas_row"] == 0 and paired[0]["python_row"] == 0
+    assert {item["column"] for item in paired[0]["differences"]} == {"v"}
+    assert one_sided[0]["sas_row"] == 1
+
+
+def test_declared_keys_pair_duplicates_within_key_groups(tmp_path: Path) -> None:
+    # Duplicate key groups pair in remaining-column order, one exact row
+    # cancels out of the excess set, and the extra duplicate stays one-sided.
+    left = {"k": [1, 1, 2, 2], "v": ["a", "b", "c", "d"]}
+    right = {"k": [2, 2, 1], "v": ["c", "x", "a"]}
+    result = _compare(tmp_path, left, right, pair_keys=("k",))
+    records = [json.loads(line) for line in Path(result["details_path"]).read_text().splitlines()]
+    paired = [record for record in records if record["kind"] == "paired_mismatch"]
+    one_sided = [record for record in records if record["kind"] == "only_sas"]
+    assert len(paired) == 1 and len(one_sided) == 1
+    assert paired[0]["sas_row"] == 3 and paired[0]["python_row"] == 1
+    assert [item["column"] for item in paired[0]["differences"]] == ["v"]
+    assert one_sided[0]["sas_row"] == 1
+    assert (result["matched"], result["sas_only"], result["python_only"]) == (2, 2, 1)
+
+
+def test_severity_is_classified_on_the_declared_key_pairing(tmp_path: Path) -> None:
+    # Value-order pairs differ on same-typed k1, causing FAIL. Joining on k1 leaves
+    # only character-vs-numeric differences in g, causing WARN.
+    left = {"g": ["x", "y"], "k1": [1, 2]}
+    right = {"g": [5, 6], "k1": [2, 1]}
+    automatic = _compare(tmp_path / "auto", left, right)
+    assert automatic["status"] == "FAIL"
+    assert automatic["reason"] == "value_mismatch"
+    keyed = _compare(tmp_path / "keyed", left, right, pair_keys=("k1",))
+    assert keyed["status"] == "WARN"
+    assert keyed["reason"] == "type_mismatch"
+    condition = next(item for item in keyed["conditions"] if item["reason"] == "type_mismatch")
+    assert condition["columns"] == ["g"]
+    assert all("pairing_note" not in item for item in keyed["conditions"])
+
+
+def test_unmatched_declared_keys_never_manufacture_a_pair(tmp_path: Path) -> None:
+    # Unequal keys must stay one-sided even when both sides have one excess row.
+    result = _compare(
+        tmp_path,
+        {"level": [1], "group": ["A"]},
+        {"level": [1], "group": ["B"]},
+        pair_keys=("level", "group"),
+    )
+    assert result["status"] == "FAIL"
+    assert result["differing_pair_count"] == 0
+    records = [json.loads(line) for line in Path(result["details_path"]).read_text().splitlines()]
+    assert sorted(record["kind"] for record in records) == ["only_python", "only_sas"]
+
+
+def test_report_explains_pairing_basis_flags_key_rows_and_reasons(tmp_path: Path) -> None:
+    row = {
+        "pair_id": 1,
+        "column": "group",
+        "sas": "west",
+        "sas_marker": False,
+        "python": "east",
+        "python_marker": False,
+        "kind": "paired_mismatch",
+        "sas_row": 0,
+        "python_row": 0,
+    }
+    source = tmp_path / "details.jsonl"
+    source.write_text("", encoding="utf-8")
+    summary = {
+        "status": "FAIL",
+        "limits": {
+            "preview_rows": 4,
+            "preview_max_bytes": 1048576,
+            "preview_total_max_bytes": 10485760,
+        },
+        "excel": {
+            "status": "omitted",
+            "path": None,
+            "reasons": [
+                {"code": "row_limit", "dataset_id": None},
+                {"code": "sheet_row_limit", "dataset_id": "dataset-2"},
+            ],
+            "limits": {
+                "max_sheets": 100,
+                "max_rows": 2000000,
+                "max_rows_per_sheet": 25000,
+                "max_bytes": 104857600,
+            },
+        },
+        "datasets": [
+            {
+                "id": "dataset-2",
+                "name": "dplocal/people",
+                "status": "FAIL",
+                "difference_row_count": 1,
+                "conditions": [],
+                "pair_keys": ["group"],
+                "unused_pair_keys": [{"column": "missing_col", "where": "absent"}],
+            }
+        ],
+        "preview_truncation": {},
+    }
+    publish(tmp_path, summary, {}, {"dataset-2": [row]}, {"dataset-2": {}})
+    html = (tmp_path / "index.html").read_text()
+    assert (
+        "declared pairing keys (group): each row is compared only with the row "
+        "whose key values are equal" in html
+    )
+    assert 'class="key-diff"' not in html
+    assert (
+        "the run exceeds --excel-max-rows (Excel's hard limit of 1048575 flat difference rows)"
+        in html
+    )
+    assert (
+        "a dataset exceeds --excel-max-rows-per-sheet (25000 flat difference rows) — dplocal/people"
+        in html
+    )
+    assert "(dataset-2)" not in html
+    assert "Ignored pairing keys, absent from one side:" in html
+
+    output = json.loads((tmp_path / "summary.json").read_text())
+    resource_dir = Path(__file__).parents[1] / "src/sentinel_parity/resources"
+    env = Environment(loader=FileSystemLoader(resource_dir), autoescape=select_autoescape(["html"]))
+    fragment = env.get_template("preview_row.html").render(row=row)
+    assert output["preview_truncation"]["dataset-2"]["rendered_bytes"] == len(
+        fragment.encode("utf-8")
+    )
+
+    summary["datasets"][0]["pair_keys"] = []
+    publish(tmp_path / "auto", summary, {}, {"dataset-2": [row]}, {"dataset-2": {}})
+    auto_html = (tmp_path / "auto/index.html").read_text()
+    assert "ascending value order across all shared columns" in auto_html
+    assert "pairs are diagnostics, not proof of row correspondence" in auto_html
+
+
 def test_preview_marks_clipped_whitespace_only_text_as_missing(tmp_path: Path) -> None:
     result = _compare(tmp_path, {"v": [" " * 600]}, {"v": ["x"]})
     fragment = result["preview_rows"][0]["sas"]
@@ -193,6 +413,18 @@ def test_type_only_crossed_differences_warn(tmp_path: Path) -> None:
     result = _compare(tmp_path, {"number": [1]}, {"number": ["2"]})
     assert result["status"] == "WARN"
     assert result["reason"] == "type_mismatch"
+    assert all("pairing_note" not in item for item in result["conditions"])
+    # With a declared key whose values match, the rows pair and the
+    # char-vs-numeric difference still warns.
+    keyed = _compare(
+        tmp_path / "keyed",
+        {"k": ["1"], "v": ["x"]},
+        {"k": [1], "v": [7]},
+        pair_keys=("k",),
+    )
+    assert keyed["status"] == "WARN"
+    assert keyed["reason"] == "type_mismatch"
+    assert all("pairing_note" not in item for item in keyed["conditions"])
 
 
 def test_workbook_policy() -> None:

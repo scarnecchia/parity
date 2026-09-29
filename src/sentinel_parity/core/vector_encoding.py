@@ -1,12 +1,10 @@
 # pattern: Functional Core
 """Exact vectorized canonical-key builders with scalar fallback masks.
 
-Every builder produces key strings byte-identical to
-`core.value_encoding.canonical_key`: a builder either covers a row exactly or
-marks it residual for the scalar path.  Dtypes without a proven-exact builder
-(unsigned widths, Decimal, binary) route the whole column through the scalar
-path, and float columns do the same whenever `round_digits` is set, because
-exact decimal rounding of binary floats has no vectorized form.
+Builders must produce keys byte-identical to `core.value_encoding.canonical_key`.
+Rows without an exact vector encoding use the scalar path. Unsigned integers,
+Decimal, and binary columns use scalar encoding throughout. Float columns also
+use scalar encoding with `round_digits` to preserve exact decimal rounding.
 """
 
 from __future__ import annotations
@@ -28,10 +26,9 @@ _NUMBER_PATTERN = r"^[+-]?[0-9]{1,18}$"  # int64-safe digits; rest is scalar
 def vector_keys(values: pl.Series, round_digits: int | None) -> tuple[pl.Series, pl.Series] | None:
     """Canonical keys for a column when an exact vector builder exists.
 
-    Returns `(keys, residual)`: `keys[i]` holds the canonical key string, or
-    null exactly where row `i` must fall back to the scalar path.  Null
-    values are keyed "null" in-vector, never residual.  `None` means the
-    dtype has no exact builder and the whole column takes the scalar path.
+    Return `(keys, residual)`. A null key marks a row for scalar encoding.
+    Null input values receive the key "null", not a residual flag.
+    Return `None` when the dtype requires scalar encoding for the whole column.
     """
     if round_digits is not None and round_digits < 1:
         # Integer fast paths require positive digits to remain round-invariant.
@@ -143,8 +140,7 @@ def _float_keys(values: pl.Series) -> tuple[pl.Series, pl.Series]:
 def _string_keys(values: pl.Series) -> tuple[pl.Series, pl.Series]:
     name = values.name
     text = pl.col(name)
-    # Integers only: _text_key decides the numeric/text split, so every other
-    # Decimal-accepted spelling routes through the scalar path untouched.
+    # Let scalar _text_key classify all numeric spellings except these safe integers.
     matches = text.str.contains(_NUMBER_PATTERN).fill_null(False)
     keys = (
         values.to_frame()

@@ -25,8 +25,8 @@
   --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
   --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
   --text-xs: 0.6875rem;
-  --text-sm: 0.8125rem;
-  --text-base: 0.9375rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
   --text-lg: 1.125rem;
   --text-xl: 1.375rem;
 }
@@ -58,13 +58,14 @@ a { color: inherit; }
   display: inline-flex; align-items: center; gap: 0.4rem;
   padding: 0.125rem 0.625rem 0.125rem 0.5rem;
   border-radius: 999px;
-  font: 600 var(--text-sm)/1 var(--sans);
+  font: 600 var(--text-sm)/1.2 var(--sans);
   letter-spacing: 0.05em;
 }
 .pill::before { content: ""; width: 0.4375rem; height: 0.4375rem; border-radius: 50%; background: currentcolor; }
 .pill.PASS { color: var(--pass); background: var(--pass-bg); }
 .pill.FAIL { color: var(--fail); background: var(--fail-bg); }
-.pill.ERROR { color: var(--error); background: var(--error-bg); }
+.pill.ERROR { color: var(--error); background: var(--surface); border: 1px solid var(--error); }
+.pill.ERROR::before { background: transparent; box-shadow: inset 0 0 0 1.5px var(--error); }
 .pill.WARN { color: var(--warn); background: var(--warn-bg); }
 
 /* Dataset navigation */
@@ -114,7 +115,7 @@ section h2 {
   padding: 0.0625rem 0.5rem;
   border: 1px solid var(--line-strong);
   border-radius: 999px;
-  font: 500 var(--text-xs)/1.4 var(--mono);
+  font: 500 var(--text-sm)/1.4 var(--mono);
   color: var(--ink-muted);
 }
 
@@ -173,10 +174,10 @@ section h2 {
 }
 .stat { display: flex; flex-direction: column; gap: 0.0625rem; min-width: 3.5rem; }
 .stat .label {
-  font: 600 var(--text-xs)/1.4 var(--sans);
-  letter-spacing: 0.06em;
+  font: 600 var(--text-sm)/1.4 var(--sans);
+  letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: var(--ink-faint);
+  color: var(--ink-muted);
 }
 .stat .value { font: 600 var(--text-lg)/1.3 var(--mono); font-variant-numeric: tabular-nums; }
 .stat .value.zero { color: var(--ink-faint); font-weight: 500; }
@@ -215,7 +216,17 @@ details pre {
 .preview { margin: 1rem 0 0; }
 .preview h3 {
   margin: 0 0 0.5rem;
-  font: 500 var(--text-sm)/1.5 var(--sans);
+  font: 600 1rem/1.3 var(--sans);
+  color: var(--ink);
+}
+.preview h3 .omitted-count {
+  font: 600 var(--text-sm)/1.3 var(--sans);
+  color: var(--ink-muted);
+}
+.preview > .preview-note:first-of-type { margin: 0.5rem 0 0.75rem; max-width: 75ch; }
+.preview .scroll-hint {
+  margin: 0 0 0.375rem;
+  font: 400 var(--text-sm)/1.4 var(--sans);
   color: var(--ink-muted);
 }
 .table-scroll {
@@ -226,27 +237,42 @@ details pre {
   border-radius: 0.25rem;
 }
 .preview table {
-  min-width: 56rem;
-  width: 100%;
+  table-layout: fixed;
+  width: 73rem;
   border-collapse: collapse;
 }
+.preview col.c-pair { width: 4rem; }
+.preview col.c-column { width: 9rem; }
+.preview col.c-value { width: 14rem; }
+.preview col.c-type { width: 6rem; }
+.preview col.c-row { width: 5rem; }
+.preview col.c-kind { width: 10rem; }
 .preview th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface);
   padding: 0.375rem 0.75rem;
   border-bottom: 1px solid var(--line-strong);
-  font: 600 var(--text-xs)/1.4 var(--sans);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font: 600 var(--text-sm)/1.4 var(--sans);
+  letter-spacing: normal;
+  text-transform: none;
   text-align: left;
-  color: var(--ink-faint);
+  color: var(--ink-muted);
   white-space: nowrap;
 }
+.preview th.wrap { white-space: normal; overflow-wrap: anywhere; }
 .preview td {
   padding: 0.5rem 0.75rem;
   border-bottom: 1px solid var(--line);
   vertical-align: top;
   font-family: var(--mono);
   font-size: var(--text-sm);
+  line-height: 1.45;
 }
+.preview td.wrap { overflow-wrap: anywhere; white-space: normal; }
+.preview .number { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.value-marker { font-family: var(--sans); font-size: var(--text-sm); color: var(--ink-muted); }
 .preview td.side { white-space: nowrap; }
 .side-badge {
   display: inline-block;
@@ -279,7 +305,8 @@ footer {
   color: var(--ink-muted);
 }
 footer p { margin: 0 0 0.375rem; max-width: 75ch; }
-footer .build { font: var(--text-xs)/1.6 var(--mono); color: var(--ink-faint); overflow-wrap: anywhere; }
+footer p.build { max-width: none; }
+footer .build { font: var(--text-sm)/1.5 var(--mono); color: var(--ink-muted); overflow-wrap: anywhere; }
 
 @media print {
   body { background: #fff; padding: 0; }
@@ -290,14 +317,27 @@ footer .build { font: var(--text-xs)/1.6 var(--mono); color: var(--ink-faint); o
 </style>
 </head>
 <body>
+{% macro workbook_reason_text(reason) -%}
+{%- set limits = summary.excel.limits | default({}) -%}
+{%- if reason.code == "row_limit" %}{% set cap = [limits.get("max_rows", 1048575), 1048575] | min %}the run exceeds --excel-max-rows ({% if limits.get("max_rows", 0) > 1048575 %}Excel's hard limit of {{ cap }}{% else %}{{ cap }}{% endif %} flat difference rows)
+{%- elif reason.code == "sheet_row_limit" %}{% set cap = [limits.get("max_rows_per_sheet", 1048575), 1048575] | min %}a dataset exceeds --excel-max-rows-per-sheet ({{ cap }} flat difference rows){% if reason.dataset_id %} — {{ dataset_names.get(reason.dataset_id, reason.dataset_id) }}{% endif %}
+{%- elif reason.code == "byte_limit" %}the run exceeds --excel-max-bytes ({{ limits.get("max_bytes", "?") }} bytes of cell text)
+{%- elif reason.code == "sheet_limit" %}{% set cap = [limits.get("max_sheets", 100), 100] | min %}more dataset sheets than --excel-max-sheets allows ({{ cap }} sheets including the Index sheet{% if limits.get("max_sheets", 0) > 100 %}, Excel's hard limit{% endif %})
+{%- elif reason.code == "cell_limit" %}a value exceeds Excel's 32,767-character cell limit
+{%- elif reason.code == "index_row_limit" %}too many datasets for the workbook Index sheet
+{%- else %}{{ reason.code }}{% if reason.dataset_id %} ({{ dataset_names.get(reason.dataset_id, reason.dataset_id) }}){% endif %}
+{%- endif %}
+{%- endmacro %}
+{% set dataset_names = {} %}
+{% for entry in summary.datasets %}{% set _ = dataset_names.update({entry.id: entry.name}) %}{% endfor %}
 <header class="masthead">
   <h1>Sentinel parity report</h1>
-  {% if summary.excel %}<p class="run-meta">Excel: {{ summary.excel.status }}{% if summary.excel.path %} · <a href="{{ summary.excel.path }}">Download workbook</a>{% elif summary.excel.reasons %} · {% for reason in summary.excel.reasons %}{{ reason.code }}{% if reason.dataset_id %} ({{ reason.dataset_id }}){% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}</p>{% endif %}
   <div class="masthead-row">
     <span class="pill {{ summary.status }}">{{ summary.status }}</span>
     {% set statuses = summary.datasets|map(attribute='status')|list %}
     <span class="run-meta">{{ statuses|length }} datasets · {{ statuses.count("PASS") }} pass · {{ statuses.count("WARN") }} warn · {{ statuses.count("FAIL") }} fail · {{ statuses.count("ERROR") }} error</span>
   </div>
+  {% if summary.excel %}<p class="run-meta">Excel workbook: {{ summary.excel.status }}{% if summary.excel.path %} · <a href="{{ summary.excel.path }}">download differences.xlsx</a>{% elif summary.excel.reasons %} — because {% for reason in summary.excel.reasons %}{{ workbook_reason_text(reason) }}{% if not loop.last %}, and {% endif %}{% endfor %}.{% endif %}</p>{% endif %}
 </header>
 {% if summary.datasets|length > 1 %}
 <nav class="dataset-nav" aria-label="Datasets">
@@ -384,17 +424,20 @@ footer .build { font: var(--text-xs)/1.6 var(--mono); color: var(--ink-faint); o
   {% endif %}
   {% set truncation = preview_truncation.get(dataset.id, {}) %}
   {% set preview_records = previews.get(dataset.id) or [] %}
+  {% set pairing_keys = dataset.get("pair_keys", []) %}
   {% if dataset.get("difference_row_count", 0) == 0 and dataset.status != "PASS" and dataset.get("conditions") %}
   <p class="preview-note">This dataset has schema or counterpart conditions but no value-difference rows.</p>
   {% endif %}
   {% if preview_records or truncation.get("omitted_rows", 0) %}
   <div class="preview">
-    <h3>Difference preview{% if truncation.get("omitted_rows", 0) %} — {{ truncation["omitted_rows"] }} difference rows omitted{% endif %}</h3>
+    <h3>Difference preview{% if truncation.get("omitted_rows", 0) %} — <span class="omitted-count">{{ truncation["omitted_rows"] }} difference rows omitted</span>{% endif %}</h3>
     {% if preview_records %}
-    <p class="preview-note">Pairs are diagnostics, not proof of row correspondence. Values are clipped for display. The JSONL link contains the complete differences.</p>
+    <p class="preview-note">Rows are paired by {% if pairing_keys %}declared pairing keys ({{ pairing_keys|join(", ") }}): each row is compared only with the row whose key values are equal, and rows with no key match are listed one-sided.{% else %}ascending value order across all shared columns; pairs are diagnostics, not proof of row correspondence.{% endif %}{% if dataset.get("unused_pair_keys") %} Ignored pairing keys, absent from one side: {% for item in dataset["unused_pair_keys"] %}<span class="col-name">{{ item.column }}</span> ({{ {"sas": "SAS only", "python": "Parquet only", "absent": "neither side"}[item.where] }}){{ ", " if not loop.last }}{% endfor %}.{% endif %} Values are clipped for display; the JSONL link has the complete differences.</p>
+    <p class="scroll-hint">Scroll horizontally for types and row numbers.</p>
     <div class="table-scroll" role="region" tabindex="0" aria-label="Difference preview table">
       <table>
-        <thead><tr>{% for label in workbook_columns %}<th scope="col">{{ label }}</th>{% endfor %}</tr></thead>
+        <colgroup>{% for col_class in preview_col_classes %}<col class="{{ col_class }}">{% endfor %}</colgroup>
+        <thead><tr>{% for label, class_name in preview_columns %}<th scope="col"{% if class_name %} class="{{ class_name }}"{% endif %}>{{ label }}</th>{% endfor %}</tr></thead>
         <tbody>
         {% for row in preview_records %}
           {% include "preview_row.html" %}

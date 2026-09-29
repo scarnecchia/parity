@@ -15,6 +15,22 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from sentinel_parity.config import DETAIL_DIR_NAME
 from sentinel_parity.io.workbook_writer import WORKBOOK_COLUMNS
 
+# Column emphasis classes for the preview table, positional over
+# WORKBOOK_COLUMNS: right-aligned identifiers, wrapping text columns.
+_PREVIEW_COLUMN_CLASSES = ("number", "wrap", "wrap", "wrap", "", "", "number", "number", "wrap")
+# Column width classes for the colgroup, same positions (see report.html CSS).
+_PREVIEW_COL_WIDTH_CLASSES = (
+    "c-pair",
+    "c-column",
+    "c-value",
+    "c-value",
+    "c-type",
+    "c-type",
+    "c-row",
+    "c-row",
+    "c-kind",
+)
+
 TEMPLATE = Path(__file__).parents[1] / "resources"
 
 
@@ -62,7 +78,9 @@ def publish(
             if original_count > len(rows):
                 reasons.append("row_limit")
             for row in rows[:row_limit]:
-                # The reported byte count excludes indentation added by the template include.
+                # Render the exact fragment that the final include produces so
+                # measured bytes match the published row; the include's leading
+                # indentation stays outside the measurement.
                 fragment = row_template.render(row=row)
                 size = len(fragment.encode("utf-8"))
                 if rendered_bytes + size > dataset_limit or size > remaining_bytes:
@@ -90,6 +108,8 @@ def publish(
             links=links,
             preview_truncation=preview_truncation,
             workbook_columns=WORKBOOK_COLUMNS,
+            preview_columns=list(zip(WORKBOOK_COLUMNS, _PREVIEW_COLUMN_CLASSES, strict=True)),
+            preview_col_classes=_PREVIEW_COL_WIDTH_CLASSES,
         )
         _atomic_text(summary_path, json.dumps(summary, ensure_ascii=False, indent=2) + "\n")
         _atomic_text(index_path, html)
