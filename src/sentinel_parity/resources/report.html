@@ -319,13 +319,13 @@ footer .build { font: var(--text-sm)/1.5 var(--mono); color: var(--ink-muted); o
 <body>
 {% macro workbook_reason_text(reason) -%}
 {%- set limits = summary.excel.limits | default({}) -%}
-{%- if reason.code == "row_limit" %}{% set cap = [limits.get("max_rows", 1048575), 1048575] | min %}the run exceeds --excel-max-rows ({% if limits.get("max_rows", 0) > 1048575 %}Excel's hard limit of {{ cap }}{% else %}{{ cap }}{% endif %} flat difference rows)
-{%- elif reason.code == "sheet_row_limit" %}{% set cap = [limits.get("max_rows_per_sheet", 1048575), 1048575] | min %}a dataset exceeds --excel-max-rows-per-sheet ({{ cap }} flat difference rows){% if reason.dataset_id %} — {{ dataset_names.get(reason.dataset_id, reason.dataset_id) }}{% endif %}
-{%- elif reason.code == "byte_limit" %}the run exceeds --excel-max-bytes ({{ limits.get("max_bytes", "?") }} bytes of cell text)
-{%- elif reason.code == "sheet_limit" %}{% set cap = [limits.get("max_sheets", 100), 100] | min %}more dataset sheets than --excel-max-sheets allows ({{ cap }} sheets including the Index sheet{% if limits.get("max_sheets", 0) > 100 %}, Excel's hard limit{% endif %})
-{%- elif reason.code == "cell_limit" %}a value exceeds Excel's 32,767-character cell limit
-{%- elif reason.code == "index_row_limit" %}too many datasets for the workbook Index sheet
-{%- else %}{{ reason.code }}{% if reason.dataset_id %} ({{ dataset_names.get(reason.dataset_id, reason.dataset_id) }}){% endif %}
+{%- if reason.code == "row_limit" %}{% set cap = [limits.get("max_rows", 1048575), 1048575] | min %}The run exceeds --excel-max-rows ({% if limits.get("max_rows", 0) > 1048575 %}Excel's hard limit of {{ cap }}{% else %}{{ cap }}{% endif %} difference rows).
+{%- elif reason.code == "sheet_row_limit" %}{% set cap = [limits.get("max_rows_per_sheet", 1048575), 1048575] | min %}A dataset exceeds --excel-max-rows-per-sheet ({{ cap }} difference rows){% if reason.dataset_id %} — {{ dataset_names.get(reason.dataset_id, reason.dataset_id) }}{% endif %}.
+{%- elif reason.code == "byte_limit" %}The run exceeds --excel-max-bytes ({{ limits.get("max_bytes", "?") }} bytes of cell text).
+{%- elif reason.code == "sheet_limit" %}{% set cap = [limits.get("max_sheets", 100), 100] | min %}More dataset sheets than --excel-max-sheets allows ({{ cap }} sheets including the Index sheet{% if limits.get("max_sheets", 0) > 100 %}, Excel's hard limit{% endif %}).
+{%- elif reason.code == "cell_limit" %}A value exceeds Excel's 32,767-character cell limit.
+{%- elif reason.code == "index_row_limit" %}Too many datasets for the workbook Index sheet.
+{%- else %}{{ reason.code }}{% if reason.dataset_id %} ({{ dataset_names.get(reason.dataset_id, reason.dataset_id) }}){% endif %}.
 {%- endif %}
 {%- endmacro %}
 {% set dataset_names = {} %}
@@ -337,7 +337,7 @@ footer .build { font: var(--text-sm)/1.5 var(--mono); color: var(--ink-muted); o
     {% set statuses = summary.datasets|map(attribute='status')|list %}
     <span class="run-meta">{{ statuses|length }} datasets · {{ statuses.count("PASS") }} pass · {{ statuses.count("WARN") }} warn · {{ statuses.count("FAIL") }} fail · {{ statuses.count("ERROR") }} error</span>
   </div>
-  {% if summary.excel %}<p class="run-meta">Excel workbook: {{ summary.excel.status }}{% if summary.excel.path %} · <a href="{{ summary.excel.path }}">download differences.xlsx</a>{% elif summary.excel.reasons %} — because {% for reason in summary.excel.reasons %}{{ workbook_reason_text(reason) }}{% if not loop.last %}, and {% endif %}{% endfor %}.{% endif %}</p>{% endif %}
+  {% if summary.excel %}<p class="run-meta">Excel workbook: {{ summary.excel.status }}{% if summary.excel.path %} · <a href="{{ summary.excel.path }}">download differences.xlsx</a>{% elif summary.excel.reasons %}. {% for reason in summary.excel.reasons %}{{ workbook_reason_text(reason) }}{% if not loop.last %} {% endif %}{% endfor %}{% endif %}</p>{% endif %}
 </header>
 {% if summary.datasets|length > 1 %}
 <nav class="dataset-nav" aria-label="Datasets">
@@ -348,7 +348,7 @@ footer .build { font: var(--text-sm)/1.5 var(--mono); color: var(--ink-muted); o
 {% set unmatched = summary.datasets|selectattr("reason", "equalto", "missing_counterpart")|list %}
 {% if unmatched %}
 <aside class="unmatched-flag">
-  <p><strong>Files without an equivalent</strong> — no same-named file exists on the other side, so these files were not read and none of their rows were compared:</p>
+  <p><strong>Files without a counterpart</strong>. These files were not read or compared.</p>
   <ul>
     {%- for dataset in unmatched %}
     <li>{{ "SAS-only" if dataset.sas_rows is none else "Parquet-only" }}: <span class="col-name">{{ dataset.name }}</span></li>
@@ -365,7 +365,7 @@ footer .build { font: var(--text-sm)/1.5 var(--mono); color: var(--ink-muted); o
     {% if dataset.status != "ERROR" %}{% for condition in conditions %}<span class="reason-chip">{{ condition.reason }}</span>{% endfor %}{% endif %}
   </header>
   {% if dataset.row_order_mismatches %}
-  <p class="order-flag">Row order differs from the Parquet file — {{ dataset.row_order_mismatches }} matched rows are misplaced</p>
+  <p class="order-flag">Row order differs: {{ dataset.row_order_mismatches }} matched row{{ "s" if dataset.row_order_mismatches != 1 }} {{ "has a different position" if dataset.row_order_mismatches == 1 else "have different positions" }}.</p>
   {% endif %}
   {% if dataset.type_mismatched_columns %}
   <p class="type-note">Character vs numeric columns: {% for name in dataset.type_mismatched_columns %}<span class="col-name">{{ name }}</span>{{ ", " if not loop.last }}{% endfor %}</p>
@@ -376,18 +376,18 @@ footer .build { font: var(--text-sm)/1.5 var(--mono); color: var(--ink-muted); o
   {% set counts = dataset.get("differing_column_counts") or {} %}
   {% set pairs = dataset.get("differing_pair_count") or 0 %}
   {% if dataset.status == "ERROR" %}
-  <p class="story">The comparison did not run{% if dataset.get("error_message") %}: {{ dataset["error_message"] }}{% endif %}.</p>
+  <p class="story">Comparison failed{% if dataset.get("error_message") %}: {{ dataset["error_message"] }}{% endif %}.</p>
   {% else %}
   {% for condition in conditions %}
   <p class="story">
     {%- if condition.reason == "missing_counterpart" -%}
-    No {{ "Parquet" if dataset.sas_rows is none else "SAS" }} counterpart was found for this dataset, so none of its rows can be compared. The file was not read, so its row count is not reported.
+    No {{ "Parquet" if dataset.sas_rows is none else "SAS" }} counterpart. File not read. Row count unavailable.
     {%- elif condition.reason == "sas_only_columns" -%}
-    Parquet is missing {{ condition.columns|length }} column{{ "s" if condition.columns|length != 1 }} that SAS has ({{ column_list(condition.columns) }}), so no row can fully match.
+    Parquet lacks {{ condition.columns|length }} SAS column{{ "s" if condition.columns|length != 1 }}: {{ column_list(condition.columns) }}.
     {%- elif condition.reason == "python_only_columns" -%}
-    Parquet has {{ condition.columns|length }} column{{ "s" if condition.columns|length != 1 }} SAS lacks ({{ column_list(condition.columns) }}), so those values are not compared.
+    Parquet has {{ condition.columns|length }} extra column{{ "s" if condition.columns|length != 1 }}: {{ column_list(condition.columns) }}. These values are not compared.
     {%- elif condition.reason == "type_mismatch" -%}
-    Differences are limited to those character vs numeric columns, so this dataset passes.
+    Value differences occur only in character vs numeric columns.
     {%- elif condition.reason == "value_mismatch" -%}
     {%- if pairs %}{{ pairs }} row pair{{ "s" if pairs != 1 }} do{{ "es" if pairs == 1 }} not match. Differing columns: {% for name, count in counts.items() %}<span class="col-name">{{ name }}</span> ({{ count }} row{{ "s" if count != 1 }}){{ ", " if not loop.last }}{% endfor %}. {% endif -%}
     {%- if dataset.sas_only > pairs %}{{ dataset.sas_only - pairs }} row{{ "s" if (dataset.sas_only - pairs) != 1 }} appear{{ "s" if (dataset.sas_only - pairs) == 1 }} only in SAS. {% endif -%}
@@ -425,14 +425,11 @@ footer .build { font: var(--text-sm)/1.5 var(--mono); color: var(--ink-muted); o
   {% set truncation = preview_truncation.get(dataset.id, {}) %}
   {% set preview_records = previews.get(dataset.id) or [] %}
   {% set pairing_keys = dataset.get("pair_keys", []) %}
-  {% if dataset.get("difference_row_count", 0) == 0 and dataset.status != "PASS" and dataset.get("conditions") %}
-  <p class="preview-note">This dataset has schema or counterpart conditions but no value-difference rows.</p>
-  {% endif %}
   {% if preview_records or truncation.get("omitted_rows", 0) %}
   <div class="preview">
     <h3>Difference preview{% if truncation.get("omitted_rows", 0) %} — <span class="omitted-count">{{ truncation["omitted_rows"] }} difference rows omitted</span>{% endif %}</h3>
     {% if preview_records %}
-    <p class="preview-note">Rows are paired by {% if pairing_keys %}declared pairing keys ({{ pairing_keys|join(", ") }}): each row is compared only with the row whose key values are equal, and rows with no key match are listed one-sided.{% else %}ascending value order across all shared columns; pairs are diagnostics, not proof of row correspondence.{% endif %}{% if dataset.get("unused_pair_keys") %} Ignored pairing keys, absent from one side: {% for item in dataset["unused_pair_keys"] %}<span class="col-name">{{ item.column }}</span> ({{ {"sas": "SAS only", "python": "Parquet only", "absent": "neither side"}[item.where] }}){{ ", " if not loop.last }}{% endfor %}.{% endif %} Values are clipped for display; the JSONL link has the complete differences.</p>
+    <p class="preview-note">{% if pairing_keys %}Pairing keys: {{ pairing_keys|join(", ") }}. Only equal keys pair. Rows without a key match remain one-sided.{% else %}Rows pair by ascending values across shared columns. Pairs do not establish row correspondence.{% endif %}{% if dataset.get("unused_pair_keys") %} Ignored pairing keys: {% for item in dataset["unused_pair_keys"] %}<span class="col-name">{{ item.column }}</span> ({{ {"sas": "SAS only", "python": "Parquet only", "absent": "neither side"}[item.where] }}){{ ", " if not loop.last }}{% endfor %}.{% endif %}</p>
     <p class="scroll-hint">Scroll horizontally for types and row numbers.</p>
     <div class="table-scroll" role="region" tabindex="0" aria-label="Difference preview table">
       <table>
@@ -446,13 +443,13 @@ footer .build { font: var(--text-sm)/1.5 var(--mono); color: var(--ink-muted); o
       </table>
     </div>
     {% endif %}
-    <p class="preview-note">Showing {{ truncation.get("shown_rows", preview_records|length) }} of {{ dataset.get("difference_row_count", 0) }} difference rows. {{ truncation.get("omitted_rows", 0) }} omitted by preview limits{% if truncation.get("reasons") %} ({{ truncation["reasons"]|join(", ") }}){% endif %}. Cell values ending in … were clipped for display.</p>
+    <p class="preview-note">{{ truncation.get("shown_rows", preview_records|length) }} of {{ dataset.get("difference_row_count", 0) }} difference rows shown.{% if truncation.get("omitted_rows", 0) %}{% if truncation.get("reasons") %} {{ truncation["omitted_rows"] }} omitted ({{ truncation["reasons"]|join(", ") }}).{% else %} {{ truncation["omitted_rows"] }} omitted.{% endif %}{% endif %} … marks clipped values. {% if links.get(dataset.id) %}<a href="{{ links[dataset.id] }}">JSONL</a>{% else %}JSONL{% endif %} contains full differences.</p>
   </div>
   {% endif %}
 </section>
 {% endfor %}
 <footer>
-  <p>Reports can contain sensitive data; store and delete them according to local data-handling rules. Previews are bounded; JSONL details contain the complete row-level result.</p>
+  <p>Reports may contain sensitive data. Follow local storage and deletion rules.</p>
   {% set report_inputs = summary.get("inputs", {}) %}
   {% set report_limits = summary.get("limits", {}) %}
   <p class="build">Run {{ summary.get("run_at", "unknown") }}{% if summary.get("request_id") %} · id {{ summary["request_id"] }}{% endif %}{% if report_inputs %} · sas {{ report_inputs.get("sas_root", "?") }} · parquet {{ report_inputs.get("python_root", "?") }}{% endif %} · round {{ "raw" if report_limits.get("round_digits") is none else report_limits["round_digits"] }} · preview rows {{ report_limits.get("preview_rows", "?") }}</p>

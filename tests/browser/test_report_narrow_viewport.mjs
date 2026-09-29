@@ -18,7 +18,7 @@ try {
         documentWidth: document.documentElement.scrollWidth,
         headingVisible: Boolean(document.querySelector('h1')?.getBoundingClientRect().width),
         linkVisible: Boolean(document.querySelector('a')?.getBoundingClientRect().width),
-        omissionVisible: document.body.innerText.includes('1 omitted by preview limits'),
+        omissionVisible: document.body.innerText.includes('1 omitted (row_limit)'),
         regionFocusable: region?.getAttribute('tabindex') === '0',
         regionScrollable: Boolean(bounds && region.scrollWidth > region.clientWidth),
       };

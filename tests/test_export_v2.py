@@ -357,21 +357,18 @@ def test_report_explains_pairing_basis_flags_key_rows_and_reasons(tmp_path: Path
     }
     publish(tmp_path, summary, {}, {"dataset-2": [row]}, {"dataset-2": {}})
     html = (tmp_path / "index.html").read_text()
-    assert (
-        "declared pairing keys (group): each row is compared only with the row "
-        "whose key values are equal" in html
-    )
+    assert "Pairing keys: group. Only equal keys pair." in html
+    assert "Rows without a key match remain one-sided." in html
     assert 'class="key-diff"' not in html
     assert (
-        "the run exceeds --excel-max-rows (Excel's hard limit of 1048575 flat difference rows)"
-        in html
+        "The run exceeds --excel-max-rows (Excel's hard limit of 1048575 difference rows)." in html
     )
     assert (
-        "a dataset exceeds --excel-max-rows-per-sheet (25000 flat difference rows) — dplocal/people"
+        "A dataset exceeds --excel-max-rows-per-sheet (25000 difference rows) — dplocal/people."
         in html
     )
     assert "(dataset-2)" not in html
-    assert "Ignored pairing keys, absent from one side:" in html
+    assert "Ignored pairing keys:" in html
 
     output = json.loads((tmp_path / "summary.json").read_text())
     resource_dir = Path(__file__).parents[1] / "src/sentinel_parity/resources"
@@ -384,8 +381,8 @@ def test_report_explains_pairing_basis_flags_key_rows_and_reasons(tmp_path: Path
     summary["datasets"][0]["pair_keys"] = []
     publish(tmp_path / "auto", summary, {}, {"dataset-2": [row]}, {"dataset-2": {}})
     auto_html = (tmp_path / "auto/index.html").read_text()
-    assert "ascending value order across all shared columns" in auto_html
-    assert "pairs are diagnostics, not proof of row correspondence" in auto_html
+    assert "Rows pair by ascending values across shared columns." in auto_html
+    assert "Pairs do not establish row correspondence." in auto_html
 
 
 def test_preview_marks_clipped_whitespace_only_text_as_missing(tmp_path: Path) -> None:
@@ -598,7 +595,8 @@ def test_report_flags_condition_only_dataset(tmp_path: Path) -> None:
         {"cond": {"shown_rows": 0, "omitted_rows": 0, "rendered_bytes": 0, "reasons": []}},
     )
     html = (tmp_path / "index.html").read_text()
-    assert "no value-difference rows" in html
+    assert 'Parquet lacks 1 SAS column: <span class="col-name">extra</span>.' in html
+    assert "no value-difference rows" not in html
 
 
 def test_preview_byte_boundaries_measure_the_rendered_fragment(tmp_path: Path) -> None:

@@ -182,7 +182,7 @@ With `id` set, these files are written into `parity-report/<id>/` so one report 
 
 `run.jsonl` is the structured run log: one JSON object per event with counts, durations, paths, and per-phase comparison timings; failures record the exception class and, for `OSError`, the errno and strerror. It never contains cell values, preview rows, or raw exception text. `--verbose` echoes the same lines to stderr as they happen, and a run that fails before the report directory exists drains its buffered events to stderr. A failed run deliberately keeps `run.jsonl`, so the report directory is then not empty: rerunning into it requires deleting the directory — including the log — by hand. The tool never removes the log; it is the forensic record of the failure.
 
-`index.html` flags files without an equivalent at the top. Each dataset has a flat, side-by-side difference table and a link to its complete JSONL details. Each table row represents one differing column, not one source row. The report shows preview counts, clipped-cell indicators, and reasons for omitted rows. It also links to the workbook or explains why no workbook was generated.
+`index.html` flags files without a counterpart at the top. Each dataset has a flat, side-by-side difference table and a link to its complete JSONL details. Each table row represents one differing column, not one source row. The report shows preview counts, clipped-cell indicators, and reasons for omitted rows. It also links to the workbook or explains why no workbook was generated.
 
 Preview row limits apply per dataset, not per side. SQL limits the fetched rows and clips cell text before Python receives it. Byte budgets apply during rendering. They count UTF-8 bytes in table-row fragments, including escaped text and markup, but exclude final indentation and the rest of the HTML. Cell clipping changes only the preview. Complete values remain in JSONL. Matching rows appear in neither the preview nor JSONL.
 
@@ -223,7 +223,7 @@ Source values and Int64 pair/row identifiers remain text to prevent numeric prec
 
 ### Dataset conditions
 
-`missing_counterpart` marks a file with no equivalent on the other side. The file is never opened — no row counts, reader metadata, or JSONL details — and `index.html` lists it under **Files without an equivalent** at the top of the report.
+`missing_counterpart` marks a file with no equivalent on the other side. The file is never opened — no row counts, reader metadata, or JSONL details — and `index.html` lists it under **Files without a counterpart** at the top of the report.
 
 A compared dataset carries `conditions`: every problem found, not just the first. Comparison always runs on the columns both sides share, so a schema delta never stops the row checks; a one-sided entry carries exactly one condition, `missing_counterpart`.
 

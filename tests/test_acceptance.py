@@ -1008,10 +1008,10 @@ def test_all_rows_fail_for_schema_or_missing_file(tmp_path: Path) -> None:
     _write_parquet(python / "dplocal" / "schema.parquet", {"different": [None, "x"]})
     assert run(RunConfig(sas, python, tmp_path / "schema-out")) == 1
     schema_html = (tmp_path / "schema-out" / "index.html").read_text()
-    assert "Parquet has 1 column SAS lacks" in schema_html
-    assert "those values are not compared" in schema_html
-    assert "Parquet is missing" in schema_html
-    assert "so no row can fully match" in schema_html
+    assert "Parquet has 1 extra column" in schema_html
+    assert "These values are not compared" in schema_html
+    assert "Parquet lacks" in schema_html
+    assert " SAS column" in schema_html
     assert "Mismatch preview" in schema_html
     dataset, records = parse_details(tmp_path / "schema-out", "sas_only_columns")
     assert dataset["reason"] == "sas_only_columns"
@@ -1061,7 +1061,7 @@ def test_all_rows_fail_for_schema_or_missing_file(tmp_path: Path) -> None:
     assert dataset["id"] not in missing_summary["detail_links"]
     assert dataset["id"] not in missing_summary["preview_truncation"]
     missing_html = (tmp_path / "missing-out" / "index.html").read_text()
-    assert "Files without an equivalent" in missing_html
+    assert "Files without a counterpart" in missing_html
     assert "dplocal/only.sas7bdat" in missing_html
 
     sas3, python3 = _roots(tmp_path / "family")
@@ -1275,7 +1275,7 @@ def test_one_sided_files_are_never_opened(tmp_path: Path) -> None:
     assert all(item["id"] not in summary["detail_links"] for item in one_sided)
     assert all(item["id"] not in summary["preview_truncation"] for item in one_sided)
     html = (tmp_path / "out" / "index.html").read_text()
-    assert "Files without an equivalent" in html
+    assert "Files without a counterpart" in html
     assert "dplocal/junk.parquet" in html and "msoc/junk.sas7bdat" in html
     events = [
         json.loads(line) for line in (tmp_path / "out" / "run.jsonl").read_text().splitlines()
@@ -1646,7 +1646,7 @@ def test_corrupt_one_sided_dataset_is_flagged_and_run_continues(tmp_path: Path) 
     assert healthy["status"] == "FAIL" and healthy["reason"] == "sas_only_columns"
     assert healthy["id"] in summary["detail_links"]
     html = (tmp_path / "out" / "index.html").read_text()
-    assert "Files without an equivalent" in html
+    assert "Files without a counterpart" in html
     assert "dplocal/bad.sas7bdat" in html
 
 
@@ -2099,7 +2099,7 @@ def test_row_order_flag_in_report(tmp_path: Path) -> None:
     assert dataset["status"] == "PASS"
     assert dataset["row_order_mismatches"] == 1440
     html = (tmp_path / "out" / "index.html").read_text()
-    assert "Row order differs from the Parquet file" in html
+    assert "Row order differs: 1440 matched rows have different positions" in html
 
 
 def test_type_crossed_columns_warn_instead_of_fail(tmp_path: Path) -> None:
@@ -2161,7 +2161,7 @@ def test_type_crossed_warn_run(tmp_path: Path) -> None:
     assert dataset["type_mismatched_columns"] == ["year"]
     html = (tmp_path / "out" / "index.html").read_text()
     assert 'Character vs numeric columns: <span class="col-name">year</span>' in html
-    assert "this dataset passes" in html
+    assert "Value differences occur only in character vs numeric columns" in html
     assert "WARN" in html
 
 
@@ -2185,8 +2185,8 @@ def test_parquet_extra_column_warns_and_shared_rows_still_match(tmp_path: Path) 
     assert dataset["matched_pairs"] == frame.height
     assert (dataset["sas_only"], dataset["python_only"]) == (0, 0)
     html = (tmp_path / "out" / "index.html").read_text()
-    assert "Parquet has 1 column SAS lacks" in html
-    assert "those values are not compared" in html
+    assert "Parquet has 1 extra column" in html
+    assert "These values are not compared" in html
 
 
 def test_sas_only_column_fails_but_shared_values_still_compare(tmp_path: Path) -> None:
@@ -2215,8 +2215,8 @@ def test_sas_only_column_fails_but_shared_values_still_compare(tmp_path: Path) -
     assert dataset["difference_row_count"] == 0
     assert dataset["conditions"][0]["reason"] == "sas_only_columns"
     html = (tmp_path / "out" / "index.html").read_text()
-    assert "Parquet is missing 1 column that SAS has" in html
-    assert "so no row can fully match" in html
+    assert "Parquet lacks 1 SAS column" in html
+    assert "so no row can fully match" not in html
 
 
 def test_all_conditions_reported_together(tmp_path: Path) -> None:
