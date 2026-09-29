@@ -74,7 +74,7 @@ def compare(
         python_only_columns = [name for name in right_columns if name not in left_names]
         shared = [name for name in left_columns if name in right_names]
         # Staged column names are case-folded, so declared keys normalize the
-        # same way; only keys both sides share can order the pairing, and the
+        # same way; only keys both sides share can drive the join, and the
         # rest are logged so a typo or schema drift is visible.
         shared_names = set(shared)
         declared_keys = list(dict.fromkeys(str(name).casefold() for name in pair_keys if name))
@@ -128,7 +128,6 @@ def compare(
                 counts,
                 pair_count,
                 all_crossed,
-                export_all_crossed,
             ) = _compare_shared(
                 connection,
                 left,
@@ -145,23 +144,17 @@ def compare(
                 crossed=crossed,
             )
             if sas_only or python_only:
+                # Severity describes the pairing that ran: the keyed join when
+                # declared keys survive, ascending value order otherwise.
                 type_explains = sas_only == python_only == pair_count and all_crossed
                 if type_explains:
-                    condition: dict[str, Any] = {
-                        "severity": "WARN",
-                        "reason": "type_mismatch",
-                        "columns": crossed,
-                    }
-                    if not export_all_crossed:
-                        # The exported pairing also pairs rows that differ
-                        # outside these columns; the pass verdict comes from
-                        # the automatic pairing and must not overclaim.
-                        condition["pairing_note"] = (
-                            "That verdict is measured on the automatic pairing; "
-                            "the declared pairing keys also pair rows whose "
-                            "differences fall outside these columns"
-                        )
-                    conditions.append(condition)
+                    conditions.append(
+                        {
+                            "severity": "WARN",
+                            "reason": "type_mismatch",
+                            "columns": crossed,
+                        }
+                    )
                 else:
                     conditions.append({"severity": "FAIL", "reason": "value_mismatch"})
         else:
@@ -231,12 +224,7 @@ def compare(
 
 
 class SharedOutcome(NamedTuple):
-    """Severity classification plus the exported pairing diagnostics.
-
-    all_crossed is measured on the automatic all-shared-column ordering and
-    drives severity; export_all_crossed is measured on the exported (possibly
-    pair_keys-reordered) pairing and qualifies the report claim.
-    """
+    """Severity classification on the exported pairing plus its diagnostics."""
 
     matched: int
     sas_only: int
@@ -245,7 +233,6 @@ class SharedOutcome(NamedTuple):
     counts: dict[str, int]
     pair_count: int
     all_crossed: bool
-    export_all_crossed: bool
 
 
 def _compare_shared(
@@ -286,9 +273,6 @@ def _compare_shared(
     matched, sas_only, python_only = _join_stats(connection, equality)
     if matched + sas_only != left["rows"] or matched + python_only != right["rows"]:
         raise RuntimeError("row counts violate multiset conservation")
-    keys_order = list(pair_keys) + [name for name in shared if name not in pair_keys]
-    auto_order = list(shared)
-
     for side, other in (("sas", "python"), ("python", "sas")):
         on = " AND ".join(
             f"s.{quote_identifier('k_' + n)}=c.{quote_identifier('k_' + n)}" for n in shared
@@ -299,35 +283,83 @@ def _compare_shared(
             "WHERE s.occurrence > coalesce(c.n, 0)"
         )
 
-    pair_match = "l.pair_rank=r.pair_rank"
     tests = " OR ".join(
         f"l.{quote_identifier('k_' + n)} IS DISTINCT FROM r.{quote_identifier('k_' + n)}"
         for n in shared
     )
-    pair_query = (
-        "CREATE TABLE pair_differences AS SELECT "
-        "l.ordinal AS s_ordinal,r.ordinal AS p_ordinal,"
-        "coalesce(l.pair_rank,r.pair_rank) AS pair_rank,"
-        "CASE WHEN l.ordinal IS NULL THEN 'only_python' "
-        "WHEN r.ordinal IS NULL THEN 'only_sas' ELSE 'paired_mismatch' END AS kind "
-        "FROM sas_pair l FULL JOIN python_pair r ON "
-        + pair_match
-        + " WHERE l.ordinal IS NULL OR r.ordinal IS NULL OR ("
-        + tests
-        + ")"
-    )
+    # Declared pairing keys turn the excess-row pairing into a join: rows pair
+    # only with a row whose declared key values match (null-safe), duplicates
+    # within one key group pair in remaining-column order, and keys without a
+    # counterpart stay one-sided — a pair never compares two different key
+    # values. Without declared keys, excess rows pair by ascending value order
+    # across all shared columns.
+    residual = [name for name in shared if name not in pair_keys]
 
-    def build_difference_tables(ordering: list[str]) -> None:
-        for side in ("sas", "python"):
-            connection.execute(
-                f"CREATE TABLE {side}_pair AS SELECT *, "
-                "row_number() OVER (ORDER BY "
-                # Declared pairing keys order the diagnostic pairing first; the
-                # remaining shared columns and the staging ordinal only break
-                # ties.
-                + ", ".join(f"{quote_identifier('k_' + name)} ASC NULLS FIRST" for name in ordering)
-                + ", ordinal) pair_rank "
-                + f"FROM {side}_excess"
+    def build_difference_tables() -> None:
+        if pair_keys:
+            for side in ("sas", "python"):
+                connection.execute(
+                    f"CREATE TABLE {side}_pair AS SELECT *, "
+                    "row_number() OVER (PARTITION BY "
+                    + ", ".join(quote_identifier("k_" + name) for name in pair_keys)
+                    + " ORDER BY "
+                    + ", ".join(
+                        [
+                            *(
+                                f"{quote_identifier('k_' + name)} ASC NULLS FIRST"
+                                for name in residual
+                            ),
+                            "ordinal",
+                        ]
+                    )
+                    + ") key_rank "
+                    + f"FROM {side}_excess"
+                )
+            keyed_on = (
+                " AND ".join(
+                    f"l.{quote_identifier('k_' + n)} IS NOT DISTINCT FROM "
+                    f"r.{quote_identifier('k_' + n)}"
+                    for n in pair_keys
+                )
+                + " AND l.key_rank=r.key_rank"
+            )
+            pair_query = (
+                "CREATE TABLE pair_differences AS SELECT row_number() OVER (ORDER BY "
+                + ", ".join(
+                    f"coalesce(l.{quote_identifier('k_' + n)},r.{quote_identifier('k_' + n)})"
+                    " ASC NULLS FIRST"
+                    for n in pair_keys
+                )
+                + ",coalesce(l.key_rank,r.key_rank),l.ordinal NULLS FIRST,"
+                "r.ordinal NULLS FIRST) AS pair_rank,"
+                "l.ordinal AS s_ordinal,r.ordinal AS p_ordinal,"
+                "CASE WHEN l.ordinal IS NULL THEN 'only_python' "
+                "WHEN r.ordinal IS NULL THEN 'only_sas' ELSE 'paired_mismatch' END AS kind "
+                "FROM sas_pair l FULL JOIN python_pair r ON "
+                + keyed_on
+                + " WHERE l.ordinal IS NULL OR r.ordinal IS NULL OR ("
+                + tests
+                + ")"
+            )
+        else:
+            for side in ("sas", "python"):
+                connection.execute(
+                    f"CREATE TABLE {side}_pair AS SELECT *, "
+                    "row_number() OVER (ORDER BY "
+                    + ", ".join(
+                        f"{quote_identifier('k_' + name)} ASC NULLS FIRST" for name in shared
+                    )
+                    + ", ordinal) pair_rank "
+                    + f"FROM {side}_excess"
+                )
+            pair_query = (
+                "CREATE TABLE pair_differences AS SELECT "
+                "l.ordinal AS s_ordinal,r.ordinal AS p_ordinal,"
+                "coalesce(l.pair_rank,r.pair_rank) AS pair_rank,"
+                "CASE WHEN l.ordinal IS NULL THEN 'only_python' "
+                "WHEN r.ordinal IS NULL THEN 'only_sas' ELSE 'paired_mismatch' END AS kind "
+                "FROM sas_pair l FULL JOIN python_pair r ON l.pair_rank=r.pair_rank "
+                "WHERE l.ordinal IS NULL OR r.ordinal IS NULL OR (" + tests + ")"
             )
         connection.execute(pair_query)
         cells = []
@@ -376,14 +408,12 @@ def _compare_shared(
                 )
         connection.execute("CREATE TABLE pair_cells AS " + " UNION ALL ".join(cells))
 
-    # Severity classification always runs on the automatic all-shared-column
-    # ordering, so declared pairing keys can realign the diagnostic pairing
-    # without ever moving a dataset between FAIL and WARN.
-    build_difference_tables(auto_order)
+    # Severity is classified on the pairing that is exported: the keyed join
+    # when declared keys survive filtering, ascending value order otherwise.
+    build_difference_tables()
     counts: dict[str, int] = {}
     pair_count = 0
     all_crossed = False
-    export_all_crossed = False
     if sas_only or python_only:
         counts = _difference_counts(connection)
         pair_count = _scalar_count(
@@ -391,21 +421,6 @@ def _compare_shared(
             "SELECT count(*) FROM pair_differences WHERE kind='paired_mismatch'",
         )
         all_crossed = _all_pair_differences_crossed(connection, crossed)
-        # Without a keyed rebuild the export is exactly this pairing.
-        export_all_crossed = all_crossed
-    if keys_order != auto_order:
-        for table in ("pair_cells", "pair_differences", "sas_pair", "python_pair"):
-            connection.execute(f"DROP TABLE {table}")
-        build_difference_tables(keys_order)
-        # Public differing_column_counts must describe the exported pairs,
-        # which the keyed ordering may realign; the private classification
-        # counts above stay on the automatic pass so severity never moves.
-        # differing_pair_count needs no recompute: every rank-aligned pair
-        # differs on shared columns, so it is min(sas_only, python_only)
-        # under any ordering.
-        counts = _difference_counts(connection)
-        if sas_only or python_only:
-            export_all_crossed = _all_pair_differences_crossed(connection, crossed)
     _export_pair_cells(connection, detail_path, dataset_id)
     connection.execute(
         "CREATE TEMP TABLE preview_source AS SELECT pair_rank AS pair_id,kind,column_name,"
@@ -434,7 +449,6 @@ def _compare_shared(
         counts=counts,
         pair_count=pair_count,
         all_crossed=all_crossed,
-        export_all_crossed=export_all_crossed,
     )
 
 

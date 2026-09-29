@@ -10,15 +10,17 @@
 # section for a SAS table without a Parquet counterpart is ignored — that
 # dataset already fails as missing_counterpart.
 #
-# Currently supported per-table key: pair_keys — shared column names that
-# order the diagnostic row pairing first for that table. This overrides the
-# global pair_keys (config.toml / --pair-keys) for the table and never
-# changes pass/fail. Columns are case-folded to match staged columns.
-# --no-pair-keys suppresses every declared pairing key for a run.
+# Currently supported per-table key: pair_keys — shared column names used as
+# join keys for that table: both tables are ordered by these columns and each
+# row is compared only with the row whose key values are equal; rows with no
+# key match are listed one-sided. This overrides the global pair_keys
+# (config.toml / --pair-keys) for the table. Columns are case-folded to match
+# staged columns. --no-pair-keys suppresses every declared pairing key for a
+# run.
 #
 # A section may contain only pair_keys; any other key is a configuration
 # error naming the key. Declaring a column that exists on only one side is
-# fine: it cannot order the pairing (reported as unused_pair_keys in the
+# fine: it cannot join the rows (reported as unused_pair_keys in the
 # summary), and the dataset fails through its normal conditions.
 
 [r01_attrition]
@@ -27,7 +29,7 @@ pair_keys = ["group", "level"]
 [headcount]
 pair_keys = ["employee_id"]
 
-# An empty pair_keys list falls back to automatic value-order pairing for
-# that table, overriding the global default.
+# An empty pair_keys list falls back to value-order pairing for that table,
+# overriding the global default.
 #[surveys]
 #pair_keys = []

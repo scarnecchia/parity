@@ -58,8 +58,8 @@ def run_command(
         typer.Option(
             "--schema",
             help=(
-                "TOML file mapping table names to per-table pair_keys; section names "
-                "are case-folded stems with one leading rNN_ prefix ignored."
+                "TOML file mapping table names to per-table pair_keys (join keys); section "
+                "names are case-folded stems with one leading rNN_ prefix ignored."
             ),
         ),
     ] = None,
@@ -68,8 +68,10 @@ def run_command(
         typer.Option(
             "--pair-keys",
             help=(
-                "Comma-separated shared columns that order the diagnostic row pairing first. "
-                "Comparison pass/fail semantics are unchanged."
+                "Comma-separated shared columns used as join keys: both tables are ordered "
+                "by these columns and each row is compared only with the row whose key "
+                "values are equal; rows with no key match are listed one-sided. Remaining "
+                "shared columns order rows within equal keys."
             ),
         ),
     ] = None,

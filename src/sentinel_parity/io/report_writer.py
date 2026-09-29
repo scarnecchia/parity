@@ -78,10 +78,10 @@ def publish(
             if original_count > len(rows):
                 reasons.append("row_limit")
             for row in rows[:row_limit]:
-                # Render with the same pairing-key context as the final include
-                # so measured bytes match the published row; the include's
-                # leading indentation stays outside the measurement.
-                fragment = row_template.render(row=row, pairing_keys=dataset.get("pair_keys", []))
+                # Render the exact fragment that the final include produces so
+                # measured bytes match the published row; the include's leading
+                # indentation stays outside the measurement.
+                fragment = row_template.render(row=row)
                 size = len(fragment.encode("utf-8"))
                 if rendered_bytes + size > dataset_limit or size > remaining_bytes:
                     if rendered_bytes + size > dataset_limit:
