@@ -98,8 +98,27 @@ def test_schema_toml_unknown_section_is_an_error(tmp_path: Path) -> None:
     sas, python = _setup_tables(tmp_path)
     schema = _write_schema(tmp_path / "schema.toml", '[nope]\npair_keys = ["x"]\n')
 
-    with pytest.raises(ValueError, match="matching no compared table"):
+    with pytest.raises(ValueError, match="matching no SAS table"):
         run(RunConfig(sas, python, tmp_path / "out", schema=schema))
+
+
+def test_schema_toml_ignores_sas_only_table_section(tmp_path: Path) -> None:
+    sas, python = _setup_tables(tmp_path)
+    shutil.copyfile(FIXTURE, sas / "dplocal" / "r09_extra.sas7bdat")
+    schema = _write_schema(
+        tmp_path / "schema.toml",
+        '[r01_people]\npair_keys = ["ACTUAL"]\n\n[r09_extra]\npair_keys = ["ACTUAL"]\n',
+    )
+    out = tmp_path / "out"
+
+    assert run(RunConfig(sas, python, out, schema=schema)) == 1
+
+    datasets = {
+        item["name"]: item
+        for item in json.loads((out / "summary.json").read_text())["datasets"]
+    }
+    assert datasets["dplocal/r09_extra.sas7bdat"]["reason"] == "missing_counterpart"
+    assert datasets["dplocal/r01_people.sas7bdat"]["pair_keys"] == ["actual"]
 
 
 def test_load_schema_names_unknown_section_keys(tmp_path: Path) -> None:

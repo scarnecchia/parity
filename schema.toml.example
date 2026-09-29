@@ -5,9 +5,10 @@
 # one leading rNN_ prefix (r01_, r02_, ...) ignored — [r01_attrition] and
 # [attrition] both configure the table behind r01_attrition.sas7bdat or
 # attrition.parquet. Matching is by stem across ALL directories: one section
-# configures that table in dplocal and msoc alike. A section matching no
-# compared table is a configuration error, so a typo cannot silently do
-# nothing.
+# configures that table in dplocal and msoc alike. A section matching no SAS
+# table is a configuration error, so a typo cannot silently do nothing; a
+# section for a SAS table without a Parquet counterpart is ignored — that
+# dataset already fails as missing_counterpart.
 #
 # Currently supported per-table key: pair_keys — shared column names that
 # order the diagnostic row pairing first for that table. This overrides the

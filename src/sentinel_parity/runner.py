@@ -34,16 +34,20 @@ def _table_pair_keys(config: RunConfig, pairing: Pairing) -> dict[str, tuple[str
     """Resolve per-table pairing keys from the optional schema.toml file.
 
     Validation always runs so a typo is reported even when the keys would not
-    be applied; application is suppressed by ignore_pair_keys.
+    be applied; application is suppressed by ignore_pair_keys. Sections must
+    name a SAS table: a section for a SAS table without a Parquet counterpart
+    is ignored, because that dataset already fails as missing_counterpart and
+    is never compared.
     """
     if config.schema is None:
         return {}
     tables = load_schema(config.schema)
-    compared = {normalize_identity_stem(sas.stem) for sas, _ in pairing.matched}
-    unknown = sorted(set(tables) - compared)
+    sas_stems = {normalize_identity_stem(sas.stem) for sas, _ in pairing.matched}
+    sas_stems |= {normalize_identity_stem(entry.stem) for entry in pairing.sas_only}
+    unknown = sorted(set(tables) - sas_stems)
     if unknown:
         raise ValueError(
-            "schema.toml has sections matching no compared table: " + ", ".join(unknown)
+            "schema.toml has sections matching no SAS table: " + ", ".join(unknown)
         )
     run_log.event("schema_loaded", tables=len(tables))
     return tables
